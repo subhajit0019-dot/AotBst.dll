@@ -41,6 +41,20 @@
           if (card.classList.contains("is-maintenance")) return;
           card.classList.add("is-active");
         });
+
+        // Strict physical lock: block any keystroke or paste while locked
+        input.addEventListener("keydown", (e) => {
+          if (left > 0 || window.maintenanceMode || input.disabled || input.readOnly) {
+            e.preventDefault();
+            return false;
+          }
+        });
+        input.addEventListener("paste", (e) => {
+          if (left > 0 || window.maintenanceMode || input.disabled || input.readOnly) {
+            e.preventDefault();
+            return false;
+          }
+        });
       }
 
       // Collapse if clicked outside and input is empty
@@ -86,22 +100,67 @@
       return `${z(h)}h ${z(m)}m ${z(s)}s`;
     }
 
+    function lockInput(claimedUid) {
+      if (input) {
+        input.disabled = true;
+        input.readOnly = true;
+        input.classList.add("input-locked");
+        if (claimedUid) {
+          input.value = claimedUid;
+        }
+        input.placeholder = "UID Locked (24h Cooldown Active)";
+      }
+      const inputContainer = document.getElementById("inputContainer");
+      if (inputContainer) inputContainer.classList.add("is-locked");
+      const lockBadge = document.getElementById("lockBadge");
+      if (lockBadge) lockBadge.style.display = "flex";
+      const fieldHint = document.getElementById("fieldHint");
+      if (fieldHint) fieldHint.textContent = "LOCKED (COOLDOWN ACTIVE)";
+      if (btn) {
+        btn.disabled = true;
+        btn.classList.add("btn-locked");
+      }
+      if (btnLabel) btnLabel.textContent = "UID Locked";
+      const btnIcon = document.getElementById("btnIcon");
+      if (btnIcon) btnIcon.textContent = "🔒";
+    }
+
+    function unlockInput() {
+      if (window.maintenanceMode) return;
+      if (input) {
+        input.disabled = false;
+        input.readOnly = false;
+        input.classList.remove("input-locked");
+        input.placeholder = "Enter numeric UID (e.g. 5182947291)";
+      }
+      const inputContainer = document.getElementById("inputContainer");
+      if (inputContainer) inputContainer.classList.remove("is-locked");
+      const lockBadge = document.getElementById("lockBadge");
+      if (lockBadge) lockBadge.style.display = "none";
+      const fieldHint = document.getElementById("fieldHint");
+      if (fieldHint) fieldHint.textContent = "NUMBERS ONLY";
+      if (btn) {
+        btn.disabled = false;
+        btn.classList.remove("btn-locked");
+      }
+      if (btnLabel) btnLabel.textContent = "Add UID";
+      const btnIcon = document.getElementById("btnIcon");
+      if (btnIcon) btnIcon.textContent = "→";
+    }
+
     function syncTimerDisplay() {
       if (!timer) return;
       if (left > 0) {
         timer.textContent = `${timeStr(left)}`;
         timer.classList.remove("ready");
         timer.classList.add("active");
-        if (btnLabel) {
-          btnLabel.textContent = "Add UID";
-        }
+        const curUid = activeUidDisplay ? activeUidDisplay.textContent.trim() : "";
+        lockInput(curUid && curUid !== "—" ? curUid : null);
       } else {
         timer.textContent = "READY TO CLAIM";
         timer.classList.remove("active");
         timer.classList.add("ready");
-        if (btnLabel) {
-          btnLabel.textContent = "Add UID";
-        }
+        unlockInput();
       }
     }
 
@@ -195,8 +254,8 @@
 
           if (res.ok && body.success) {
             renderAlert("SUCCESS", body.message || `UID ${raw} activated for 24 hours.`, "ok");
-            if (input) input.value = "";
             left = Number(body.cooldown_remaining || 86400);
+            lockInput(raw);
             if (activeCard && activeUidDisplay) {
               activeUidDisplay.textContent = raw;
               activeCard.hidden = false;
@@ -206,14 +265,17 @@
             renderAlert("WARNING", body.message || "Request could not be processed.", "warn");
             if (body.cooldown_remaining) {
               left = body.cooldown_remaining;
+              lockInput();
               runClock();
             }
           }
         } catch (_) {
           renderAlert("NETWORK ERROR", "Unable to connect to server. Please check your connection.", "warn");
         } finally {
-          btn.disabled = false;
-          if (btnLabel) btnLabel.textContent = "Add UID";
+          if (left <= 0 && !window.maintenanceMode) {
+            btn.disabled = false;
+            if (btnLabel) btnLabel.textContent = "Add UID";
+          }
         }
       });
     }

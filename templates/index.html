@@ -80,30 +80,35 @@
             <div class="form-field">
               <div class="label-row">
                 <label for="uidInput" class="field-label">ACCOUNT UID</label>
-                <span class="field-hint">NUMBERS ONLY</span>
+                <span class="field-hint" id="fieldHint">{% if not can_claim and not maintenance_mode %}LOCKED (COOLDOWN ACTIVE){% elif maintenance_mode %}PAUSED{% else %}NUMBERS ONLY{% endif %}</span>
               </div>
               
-              <div class="input-container">
+              <div class="input-container {% if not can_claim or maintenance_mode %}is-locked{% endif %}" id="inputContainer">
                 <span class="input-prefix">UID</span>
                 <input 
                   type="text" 
                   id="uidInput" 
                   name="uid" 
-                  class="uid-input" 
-                  placeholder="Enter numeric UID (e.g. 5182947291)" 
+                  class="uid-input {% if not can_claim or maintenance_mode %}input-locked{% endif %}" 
+                  placeholder="{% if not can_claim and not maintenance_mode %}UID Locked (24h Cooldown Active){% elif maintenance_mode %}Claims Paused (Maintenance){% else %}Enter numeric UID (e.g. 5182947291){% endif %}" 
+                  value="{% if not can_claim and last_claimed_uid %}{{ last_claimed_uid }}{% endif %}"
                   inputmode="numeric" 
                   pattern="[0-9]{5,20}" 
                   maxlength="20"
                   required 
                   autocomplete="off"
-                  {% if maintenance_mode %}disabled{% endif %}
+                  {% if not can_claim or maintenance_mode %}disabled readonly{% endif %}
                 >
+                <div class="lock-badge" id="lockBadge" {% if can_claim and not maintenance_mode %}style="display: none;"{% endif %}>
+                  <span class="lock-badge-icon">🔒</span>
+                  <span id="lockBadgeText">{% if maintenance_mode %}PAUSED{% else %}LOCKED{% endif %}</span>
+                </div>
               </div>
             </div>
 
-            <button type="submit" id="submitBtn" class="btn-add-uid" {% if maintenance_mode %}disabled style="opacity: 0.6; cursor: not-allowed;"{% endif %}>
-              <span class="btn-label" id="btnLabel">{% if maintenance_mode %}Maintenance Active{% else %}Add UID{% endif %}</span>
-              <span class="btn-icon" aria-hidden="true">→</span>
+            <button type="submit" id="submitBtn" class="btn-add-uid {% if not can_claim or maintenance_mode %}btn-locked{% endif %}" {% if not can_claim or maintenance_mode %}disabled{% endif %}>
+              <span class="btn-label" id="btnLabel">{% if maintenance_mode %}Maintenance Active{% elif not can_claim %}UID Locked{% else %}Add UID{% endif %}</span>
+              <span class="btn-icon" id="btnIcon" aria-hidden="true">{% if not can_claim or maintenance_mode %}🔒{% else %}→{% endif %}</span>
             </button>
           </form>
 
