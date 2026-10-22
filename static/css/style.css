@@ -610,22 +610,26 @@ body.portal-body {
 .lock-badge {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 12px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  color: #a1a1aa;
-  background: rgba(255, 255, 255, 0.03);
+  justify-content: center;
+  padding: 0 13px;
+  background: transparent;
   height: 100%;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
   user-select: none;
   align-self: stretch;
+  flex-shrink: 0;
 }
 
-.lock-badge-icon {
-  font-size: 11px;
+.lock-icon-svg {
+  width: 13px;
+  height: 13px;
+  stroke: #71717a;
+  transition: stroke 0.2s ease, opacity 0.2s ease;
+  opacity: 0.85;
+}
+
+.input-container.is-locked:hover .lock-icon-svg {
+  stroke: #a1a1aa;
+  opacity: 1;
 }
 
 /* Add UID Button */
