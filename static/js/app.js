@@ -308,5 +308,30 @@
         }
       }).catch(() => {});
     };
+
+    // Recheck Discord guild membership
+    window.recheckGuildMembership = async function() {
+      const b = document.querySelector(".btn-chip-recheck");
+      if (b) {
+        b.disabled = true;
+        b.textContent = "...";
+      }
+      try {
+        const res = await fetch("/auth/discord/check-guild");
+        const data = await res.json();
+        if (data && data.in_guild) {
+          window.location.reload();
+        } else {
+          renderAlert("NOT IN SERVER", "Please make sure you join the MeowGG Discord server, then click Check again.", "warn");
+        }
+      } catch (_) {
+        renderAlert("ERROR", "Could not verify membership. Please refresh the page.", "warn");
+      } finally {
+        if (b) {
+          b.disabled = false;
+          b.textContent = "Check";
+        }
+      }
+    };
   });
 })();

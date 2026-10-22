@@ -10,6 +10,14 @@ MEOW_DISCORD_SERVER_INVITE = os.getenv("MEOW_DISCORD_SERVER_INVITE", "https://di
 GUILD_ID = os.getenv("GUILD_ID", "1445228461668040756")
 MEOW_GUILD_ID = os.getenv("MEOW_GUILD_ID", "1535587594610544640")
 
+# ==================== DISCORD OAUTH2 & BOT VERIFICATION ====================
+# Discord Developer Portal: https://discord.com/developers/applications -> General Information / OAuth2
+DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "1561024986851057715")
+DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "cga15Q7liKu_hImsb6VxEvaATKnG8Cg9")
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", os.getenv("DISCORD_TOKEN", "MTU2MTAyNDk4Njg1MTA1NzcxNQ.Gd0-aO.VOQxZDeczALBuKuWvxvoPLonGAZdB7Njq3lsrY"))
+DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "")
+REQUIRE_DISCORD_LOGIN = os.getenv("REQUIRE_DISCORD_LOGIN", "true").lower() in ("true", "1", "yes")
+
 # ==================== WEB SESSION SECRET & PORT ====================
 SECRET_KEY = os.getenv("SECRET_KEY", "meowgg_secure_session_key_2026")
 PORT = int(os.getenv("PORT", 5000))

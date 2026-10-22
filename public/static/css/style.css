@@ -270,21 +270,25 @@ body.portal-body {
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.95), 0 0 35px rgba(0, 0, 0, 0.9), 0 1px 0 rgba(255, 255, 255, 0.05) inset;
   
   /* Tight fit — content height without alert */
-  min-height: 380px;
-  max-height: 460px;
+  min-height: 400px;
+  max-height: 600px;
 }
 
-/* When alert/error is active, expand card dynamically so all content + status bar fit cleanly */
+/* When alert/error is active or Discord gate is displayed, expand card dynamically */
 .card.has-alert,
 .card:has(.portal-alert),
+.card:has(.discord-gate-card),
 .card.has-alert:hover,
 .card.has-alert:focus-within,
 .card.has-alert.is-active,
 .card:has(.portal-alert):hover,
 .card:has(.portal-alert):focus-within,
-.card:has(.portal-alert).is-active {
-  min-height: 490px;
-  max-height: 560px;
+.card:has(.portal-alert).is-active,
+.card:has(.discord-gate-card):hover,
+.card:has(.discord-gate-card):focus-within,
+.card:has(.discord-gate-card).is-active {
+  min-height: 510px;
+  max-height: 640px;
 }
 
 .card:hover .border,
@@ -610,22 +614,26 @@ body.portal-body {
 .lock-badge {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 12px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  color: #a1a1aa;
-  background: rgba(255, 255, 255, 0.03);
+  justify-content: center;
+  padding: 0 13px;
+  background: transparent;
   height: 100%;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
   user-select: none;
   align-self: stretch;
+  flex-shrink: 0;
 }
 
-.lock-badge-icon {
-  font-size: 11px;
+.lock-icon-svg {
+  width: 13px;
+  height: 13px;
+  stroke: #71717a;
+  transition: stroke 0.2s ease, opacity 0.2s ease;
+  opacity: 0.85;
+}
+
+.input-container.is-locked:hover .lock-icon-svg {
+  stroke: #a1a1aa;
+  opacity: 1;
 }
 
 /* Add UID Button */
@@ -983,5 +991,206 @@ body.portal-body {
 @keyframes blinkWarn {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
+}
+
+/* =======================================================
+   DISCORD OAUTH2 GATE & USER CHIP STYLES
+   ======================================================= */
+.discord-gate-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: rgba(88, 101, 242, 0.08);
+  border: 1px solid rgba(88, 101, 242, 0.28);
+  border-radius: var(--radius-inner);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 25px rgba(88, 101, 242, 0.12);
+  animation: gateFadeIn 0.3s ease-out;
+}
+
+@keyframes gateFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.discord-gate-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #5865F2;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 12px rgba(88, 101, 242, 0.5);
+}
+
+.discord-gate-content {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.gate-title {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  color: #8591ff;
+  text-transform: uppercase;
+}
+
+.gate-desc {
+  font-size: 11.5px;
+  color: #a1a1aa;
+  line-height: 1.4;
+}
+
+.btn-gate-connect {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: #5865F2;
+  color: #ffffff !important;
+  border-radius: var(--radius-inner);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 700;
+  text-decoration: none;
+  transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: 0 0 15px rgba(88, 101, 242, 0.35);
+}
+
+.btn-gate-connect:hover {
+  background: #4752c4;
+  transform: translateY(-1px);
+  box-shadow: 0 0 20px rgba(88, 101, 242, 0.55);
+}
+
+/* User Profile Chip */
+.discord-chip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-inner);
+  padding: 8px 12px;
+  margin-bottom: 16px;
+  transition: border-color 0.2s ease;
+}
+
+.discord-chip.chip-verified {
+  border-color: rgba(34, 197, 94, 0.3);
+  background: rgba(34, 197, 94, 0.05);
+}
+
+.discord-chip.chip-unverified {
+  border-color: rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.06);
+}
+
+.discord-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.15);
+  object-fit: cover;
+}
+
+.discord-chip-details {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.discord-chip-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.discord-chip-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+}
+
+.chip-verified .discord-chip-status {
+  color: #4ade80;
+}
+
+.chip-unverified .discord-chip-status {
+  color: #fbbf24;
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.dot-verified {
+  background: #22c55e;
+  box-shadow: 0 0 6px #22c55e;
+}
+
+.dot-unverified {
+  background: #f59e0b;
+  box-shadow: 0 0 6px #f59e0b;
+  animation: blinkWarn 1.2s infinite;
+}
+
+.discord-chip-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-chip-join {
+  padding: 4px 8px;
+  border-radius: 5px;
+  background: #5865F2;
+  color: #ffffff !important;
+  font-size: 10px;
+  font-weight: 700;
+  text-decoration: none;
+  font-family: var(--font-mono);
+  letter-spacing: 0.5px;
+}
+
+.btn-chip-recheck {
+  padding: 4px 8px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #e4e4e7;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-chip-logout {
+  color: #71717a;
+  text-decoration: none;
+  font-size: 13px;
+  padding: 3px 6px;
+  border-radius: 4px;
+}
+
+.btn-chip-logout:hover {
+  color: #ef4444;
 }
 
