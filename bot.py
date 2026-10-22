@@ -10,12 +10,14 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+import config
+
 TOKEN = os.getenv("DISCORD_TOKEN")
 ADMIN_IDS = [id.strip() for id in os.getenv("ADMIN_IDS", "").split(",") if id.strip()]
 
-# API Configuration from environment variables
-API_KEY = os.getenv("API_KEY")
-API_URL = os.getenv("API_URL")
+# API Configuration from tracked config module with env overrides
+API_KEY = config.API_KEY
+API_URL = config.API_URL
 
 # Check required environment variables
 if not TOKEN:

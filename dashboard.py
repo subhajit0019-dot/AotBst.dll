@@ -6,8 +6,9 @@ import threading
 import requests
 from flask import Flask, render_template, request, session, jsonify, redirect, url_for
 from dotenv import load_dotenv
-
 load_dotenv()
+
+import config
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -17,7 +18,7 @@ app = Flask(
     template_folder=os.path.join(BASE_DIR, "templates"),
     static_folder=static_dir
 )
-app.secret_key = os.getenv("SECRET_KEY", secrets.token_hex(32))
+app.secret_key = config.SECRET_KEY
 
 # Ensure session cookies are hardened (Secure enabled on Vercel HTTPS)
 is_vercel = bool(os.getenv("VERCEL"))
@@ -30,15 +31,15 @@ app.config.update(
 app.jinja_env.auto_reload = not is_vercel
 
 # Admin Panel Credentials (/admin)
-ADMIN_PANEL_USER = os.getenv("ADMIN_PANEL_USER", "72")
-ADMIN_PANEL_PASS = os.getenv("ADMIN_PANEL_PASS", "12")
+ADMIN_PANEL_USER = config.ADMIN_PANEL_USER
+ADMIN_PANEL_PASS = config.ADMIN_PANEL_PASS
 
-# API & Server Configuration strictly loaded from environment variables
-API_KEY = os.getenv("API_KEY")
-API_URL = os.getenv("API_URL")
+# API & Server Configuration loaded directly from config.py
+API_KEY = config.API_KEY
+API_URL = config.API_URL
 
-DISCORD_SERVER_INVITE = os.getenv("DISCORD_SERVER_INVITE", "https://discord.gg/meowgg")
-MEOW_DISCORD_SERVER_INVITE = os.getenv("MEOW_DISCORD_SERVER_INVITE", "https://discord.gg/meowgg")
+DISCORD_SERVER_INVITE = config.DISCORD_SERVER_INVITE
+MEOW_DISCORD_SERVER_INVITE = config.MEOW_DISCORD_SERVER_INVITE
 
 # Vercel Serverless environment compatibility:
 # /var/task is read-only on Vercel. Writable SQLite database must reside in temp directory (/tmp).
@@ -365,13 +366,13 @@ def is_uid_already_active(uid: str, current_time: int) -> bool:
 # ==================== EXTERNAL API CLIENT ====================
 def call_upstream_uid_api(uid: str) -> dict:
     """Secure upstream whitelist API call. No keys or URLs leak to client."""
-    if not API_KEY or not API_URL:
-        return {"status": 500, "message": "Server configuration error. API credentials missing in environment."}
+    current_key = os.getenv("API_KEY") or API_KEY or "GTCAPI-BB05166D26D7EC81F86BA3C893998613"
+    current_url = os.getenv("API_URL") or API_URL or "https://gtccheats.xyz/Api/uidbypassapi/api_user.php"
 
-    url = f"{API_URL}?action=add"
+    url = f"{current_url}?action=add"
     headers = {
         "Content-Type": "application/json",
-        "X-API-KEY": API_KEY
+        "X-API-KEY": current_key
     }
     payload = {
         "account_id": str(uid),
