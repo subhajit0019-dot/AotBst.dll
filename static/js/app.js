@@ -1,0 +1,246 @@
+(function() {
+  // Prevent context menu
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  // Prevent inspect shortcuts
+  document.addEventListener("keydown", (e) => {
+    if (
+      e.key === "F12" ||
+      (e.ctrlKey && e.shiftKey && (e.key === "I" || e.key === "i" || e.key === "J" || e.key === "j" || e.key === "C" || e.key === "c")) ||
+      (e.ctrlKey && (e.key === "U" || e.key === "u" || e.key === "S" || e.key === "s"))
+    ) {
+      e.preventDefault();
+      e.stopPropagation();
+      return false;
+    }
+  });
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const card = document.getElementById("portalCard");
+    const form = document.getElementById("claimForm");
+    const input = document.getElementById("uidInput");
+    const btn = document.getElementById("submitBtn");
+    const btnLabel = document.getElementById("btnLabel");
+    const timer = document.getElementById("cooldownTimer");
+    const alertBox = document.getElementById("alertContainer");
+    const activeCard = document.getElementById("activeClaimCard");
+    const activeUidDisplay = document.getElementById("displayActiveUid");
+
+    let left = parseInt(window.initialCooldownRemaining || "0", 10);
+    let loop = null;
+
+    // Expand card on click/touch/focus
+    if (card) {
+      card.addEventListener("click", () => {
+        card.classList.add("is-active");
+      });
+
+      if (input) {
+        input.addEventListener("focus", () => card.classList.add("is-active"));
+      }
+
+      // Collapse if clicked outside and input is empty
+      document.addEventListener("click", (e) => {
+        if (!card.contains(e.target)) {
+          const val = input ? input.value.trim() : "";
+          if (!val && !alertBox.innerHTML.trim()) {
+            card.classList.remove("is-active");
+            card.classList.remove("has-alert");
+          }
+        }
+      });
+    }
+
+    function renderAlert(title, message, level) {
+      if (!alertBox) return;
+      if (card) {
+        card.classList.add("is-active");
+        card.classList.add("has-alert");
+      }
+
+      const typeClass = (level === "ok" || level === "success") ? "portal-alert-success" : "portal-alert-warn";
+      const icon = (level === "ok" || level === "success") ? "✓" : "⚠️";
+
+      alertBox.innerHTML = `
+        <div class="portal-alert ${typeClass}">
+          <span class="portal-alert-icon">${icon}</span>
+          <div class="portal-alert-content">
+            <div class="portal-alert-title">${title}</div>
+            <div class="portal-alert-message">${message}</div>
+          </div>
+        </div>
+      `;
+      alertBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    function timeStr(sec) {
+      if (sec <= 0) return "READY TO CLAIM";
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = Math.floor(sec % 60);
+      const z = (n) => String(n).padStart(2, "0");
+      return `${z(h)}h ${z(m)}m ${z(s)}s`;
+    }
+
+    function syncTimerDisplay() {
+      if (!timer) return;
+      if (left > 0) {
+        timer.textContent = `${timeStr(left)}`;
+        timer.classList.remove("ready");
+        timer.classList.add("active");
+        if (btnLabel) {
+          btnLabel.textContent = "Add UID";
+        }
+      } else {
+        timer.textContent = "READY TO CLAIM";
+        timer.classList.remove("active");
+        timer.classList.add("ready");
+        if (btnLabel) {
+          btnLabel.textContent = "Add UID";
+        }
+      }
+    }
+
+    function runClock() {
+      if (loop) clearInterval(loop);
+      syncTimerDisplay();
+      if (left <= 0) return;
+      loop = setInterval(() => {
+        left--;
+        if (left <= 0) {
+          left = 0;
+          clearInterval(loop);
+          syncTimerDisplay();
+          renderAlert("COOLDOWN FINISHED", "24-hour cycle has elapsed. You can now submit an Account UID.", "ok");
+        } else {
+          syncTimerDisplay();
+        }
+      }, 1000);
+    }
+
+    // Initialize timer
+    runClock();
+
+    // Periodic sync with server
+    setInterval(async () => {
+      try {
+        const res = await fetch("/api/status", { cache: "no-store" });
+        const val = await res.json();
+        if (val && typeof val.cooldown_remaining === "number") {
+          if (val.maintenance_mode !== undefined) {
+            window.maintenanceMode = Boolean(val.maintenance_mode);
+          }
+          if (Math.abs(val.cooldown_remaining - left) > 3) {
+            left = val.cooldown_remaining;
+            runClock();
+          }
+          if (val.last_claimed_uid && activeCard && activeUidDisplay) {
+            activeUidDisplay.textContent = val.last_claimed_uid;
+            activeCard.hidden = false;
+          }
+        }
+      } catch (_) {}
+    }, 10000);
+
+    // Form submit listener
+    if (form) {
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+
+        // If system is currently under maintenance
+        if (window.maintenanceMode) {
+          renderAlert(
+            "UNDER MAINTENANCE",
+            "Free UID whitelist claims are temporarily paused by administration.",
+            "warn"
+          );
+          return;
+        }
+
+        // If user already claimed or cooldown active
+        if (left > 0) {
+          renderAlert(
+            "LIMIT REACHED",
+            `24 ghante me sirf 1 UID add ho sakta hai. Next claim unlock in: ${timeStr(left)}.`,
+            "warn"
+          );
+          return;
+        }
+
+        const raw = (input ? input.value : "").trim();
+        if (!/^\d{5,20}$/.test(raw)) {
+          renderAlert(
+            "INVALID UID",
+            "Please enter a valid numeric Account ID (5 to 20 digits).",
+            "warn"
+          );
+          if (input) input.focus();
+          return;
+        }
+
+        if (btnLabel) btnLabel.textContent = "Processing...";
+        btn.disabled = true;
+
+        try {
+          const res = await fetch("/api/claim", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ uid: raw })
+          });
+          const body = await res.json();
+
+          if (res.ok && body.success) {
+            renderAlert("SUCCESS", body.message || `UID ${raw} activated for 24 hours.`, "ok");
+            if (input) input.value = "";
+            left = Number(body.cooldown_remaining || 86400);
+            if (activeCard && activeUidDisplay) {
+              activeUidDisplay.textContent = raw;
+              activeCard.hidden = false;
+            }
+            runClock();
+          } else {
+            renderAlert("WARNING", body.message || "Request could not be processed.", "warn");
+            if (body.cooldown_remaining) {
+              left = body.cooldown_remaining;
+              runClock();
+            }
+          }
+        } catch (_) {
+          renderAlert("NETWORK ERROR", "Unable to connect to server. Please check your connection.", "warn");
+        } finally {
+          btn.disabled = false;
+          if (btnLabel) btnLabel.textContent = "Add UID";
+        }
+      });
+    }
+
+    // Active UID copy button
+    window.copyActiveUid = function() {
+      const v = document.getElementById("displayActiveUid");
+      const b = document.getElementById("copyActiveUidBtn");
+      if (!v) return;
+      const t = v.textContent.trim();
+      if (!t || t === "—") return;
+      navigator.clipboard.writeText(t).then(() => {
+        if (b) {
+          const prev = b.textContent;
+          b.textContent = "COPIED";
+          setTimeout(() => { b.textContent = prev; }, 1400);
+        }
+      }).catch(() => {});
+    };
+
+    // Discord link copy button
+    window.copyDiscordLink = function() {
+      const b = document.getElementById("copyDiscordBtn");
+      const inviteUrl = window.discordInviteMeow || window.discordInviteNova || "https://discord.gg/meowgg";
+      navigator.clipboard.writeText(inviteUrl).then(() => {
+        if (b) {
+          const prev = b.textContent;
+          b.textContent = "COPIED";
+          setTimeout(() => { b.textContent = prev; }, 1400);
+        }
+      }).catch(() => {});
+    };
+  });
+})();

@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#09090b">
+  <title>MeowGG | UID ACCESS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22black%22/><path d=%22M27 72V28h12l22 27V28h12v44H62L39 44v28z%22 fill=%22white%22/></svg>">
+</head>
+<body class="portal-body" oncontextmenu="return false;">
+
+  <div class="portal-container">
+    
+    <!-- From Uiverse.io by Smit-Prajapati (Enhanced Interactive Matte Black UID Card) -->
+    <div class="card" id="portalCard">
+      <div class="border"></div>
+      
+      <div class="card-stack">
+        <!-- Front View (By default shows 'Add UID', animated logo & border) -->
+        <div class="card-front">
+          <div class="content">
+            <div class="logo meowgg-logo">
+              <div class="meowgg-brand-wrap">
+                <span class="meowgg-title">Meow<span class="meowgg-accent">GG</span></span>
+                <span class="meowgg-bar"></span>
+              </div>
+            </div>
+            <span class="logo-bottom-text">Add UID</span>
+          </div>
+          <span class="bottom-text">MeowGG</span>
+        </div>
+
+        <!-- Expanded Interactive UID Interface (Revealed on hover / mouse drag) -->
+        <div class="card-expanded">
+          <header class="card-header">
+            <div class="brand-group">
+              <div class="brand-badge">MG</div>
+              <div class="brand-text">
+                <h1 class="brand-title">MeowGG</h1>
+                <span class="brand-sub">UID WHITELIST ACCESS</span>
+              </div>
+            </div>
+            <div class="live-pill {% if maintenance_mode %}pill-warn{% endif %}">
+              <span class="status-indicator {% if maintenance_mode %}dot-warn{% endif %}"></span>
+              <span class="status-text">{% if maintenance_mode %}MAINTENANCE{% else %}ONLINE{% endif %}</span>
+            </div>
+          </header>
+
+          <!-- Warning & Alert Notification Area (Top of the Box) -->
+          <div id="alertContainer" class="alert-container" aria-live="polite">
+            {% if maintenance_mode %}
+            <div class="portal-alert portal-alert-warn">
+              <span class="portal-alert-icon">⚠️</span>
+              <div class="portal-alert-content">
+                <div class="portal-alert-title">SYSTEM UNDER MAINTENANCE</div>
+                <div class="portal-alert-message">Free UID whitelist claims are temporarily paused by administration.</div>
+              </div>
+            </div>
+            {% endif %}
+          </div>
+
+          <!-- UID Whitelist Form -->
+          <form id="claimForm" class="claim-form" autocomplete="off">
+            <div class="form-field">
+              <div class="label-row">
+                <label for="uidInput" class="field-label">ACCOUNT UID</label>
+                <span class="field-hint">NUMBERS ONLY</span>
+              </div>
+              
+              <div class="input-container">
+                <span class="input-prefix">UID</span>
+                <input 
+                  type="text" 
+                  id="uidInput" 
+                  name="uid" 
+                  class="uid-input" 
+                  placeholder="Enter numeric UID (e.g. 5182947291)" 
+                  inputmode="numeric" 
+                  pattern="[0-9]{5,20}" 
+                  maxlength="20"
+                  required 
+                  autocomplete="off"
+                  {% if maintenance_mode %}disabled{% endif %}
+                >
+              </div>
+            </div>
+
+            <button type="submit" id="submitBtn" class="btn-add-uid" {% if maintenance_mode %}disabled style="opacity: 0.6; cursor: not-allowed;"{% endif %}>
+              <span class="btn-label" id="btnLabel">{% if maintenance_mode %}Maintenance Active{% else %}Add UID{% endif %}</span>
+              <span class="btn-icon" aria-hidden="true">→</span>
+            </button>
+          </form>
+
+          <!-- Active Claimed UID Display (shown when a UID is currently registered) -->
+          <div id="activeClaimCard" class="active-claim-card" {% if not last_claimed_uid %}hidden{% endif %}>
+            <div class="active-info">
+              <span class="active-label">CURRENT ACTIVE UID</span>
+              <strong id="displayActiveUid" class="active-uid-value">{{ last_claimed_uid or '—' }}</strong>
+            </div>
+            <button type="button" class="btn-copy-uid" id="copyActiveUidBtn" onclick="copyActiveUid()">
+              COPY
+            </button>
+          </div>
+
+          <!-- Cooldown Status Indicator -->
+          <div class="cooldown-status-bar">
+            <span class="status-caption">STATUS</span>
+            <span id="cooldownTimer" class="status-badge {% if maintenance_mode %}badge-maintenance{% elif can_claim %}ready{% else %}active{% endif %}">
+              {% if maintenance_mode %}MAINTENANCE PAUSED{% elif can_claim %}READY TO CLAIM{% else %}COOLDOWN ACTIVE{% endif %}
+            </span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Box Ke Niche: Discord Link & Copy Section -->
+    <div class="discord-box">
+      <div class="discord-left">
+        <div class="discord-icon-wrap">
+          <svg class="discord-svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+            <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.894.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
+          </svg>
+        </div>
+        <div class="discord-info">
+          <span class="discord-label">MeowGG Discord</span>
+          <span class="discord-link-text" id="discordInviteDisplay">{{ MEOW_SERVER_INVITE or 'https://discord.gg/meowgg' }}</span>
+        </div>
+      </div>
+      
+      <div class="discord-actions">
+        <button type="button" class="btn-discord-copy" id="copyDiscordBtn" onclick="copyDiscordLink()">
+          Copy Link
+        </button>
+        <a href="{{ MEOW_SERVER_INVITE or 'https://discord.gg/meowgg' }}" target="_blank" rel="noopener noreferrer" class="btn-discord-join">
+          Join ↗
+        </a>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    window.initialCooldownRemaining = {{ cooldown_remaining|default(0) }};
+    window.lastClaimedUid = "{{ last_claimed_uid or '' }}";
+    window.maintenanceMode = {{ 'true' if maintenance_mode else 'false' }};
+    window.discordInviteMeow = "{{ MEOW_SERVER_INVITE or 'https://discord.gg/meowgg' }}";
+    window.discordInviteNova = "{{ NOVA_SERVER_INVITE or '' }}";
+  </script>
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
