@@ -38,6 +38,9 @@ ADMIN_PANEL_PASS = config.ADMIN_PANEL_PASS
 # API & Server Configuration loaded directly from config.py
 API_KEY = config.API_KEY
 API_URL = config.API_URL
+API_ACTION_ADD = getattr(config, "API_ACTION_ADD", "add")
+API_ACTION_EDIT = getattr(config, "API_ACTION_EDIT", "change_uid")
+API_ACTION_DELETE = getattr(config, "API_ACTION_DELETE", "delete")
 
 DISCORD_SERVER_INVITE = config.DISCORD_SERVER_INVITE
 MEOW_DISCORD_SERVER_INVITE = config.MEOW_DISCORD_SERVER_INVITE
@@ -378,8 +381,9 @@ def call_upstream_uid_api(uid: str) -> dict:
     """Secure upstream whitelist API call. No keys or URLs leak to client."""
     current_key = os.getenv("API_KEY") or API_KEY or "GTCAPI-BB05166D26D7EC81F86BA3C893998613"
     current_url = os.getenv("API_URL") or API_URL or "https://gtccheats.xyz/Api/uidbypassapi/api_user.php"
+    action = os.getenv("API_ACTION_ADD", API_ACTION_ADD)
 
-    url = f"{current_url}?action=add"
+    url = f"{current_url}?action={action}"
     headers = {
         "Content-Type": "application/json",
         "X-API-KEY": current_key
@@ -408,6 +412,54 @@ def call_upstream_uid_api(uid: str) -> dict:
         return {"status": 504, "success": False, "message": "Upstream gate timed out. Please try again in a few moments."}
     except Exception:
         return {"status": 500, "success": False, "message": "Network error while connecting to activation gateway."}
+
+def delete_upstream_uid_api(uid: str) -> dict:
+    """Delete a UID from the upstream whitelist API using configured API_ACTION_DELETE."""
+    current_key = os.getenv("API_KEY") or API_KEY or "GTCAPI-BB05166D26D7EC81F86BA3C893998613"
+    current_url = os.getenv("API_URL") or API_URL or "https://gtccheats.xyz/Api/uidbypassapi/api_user.php"
+    action = os.getenv("API_ACTION_DELETE", API_ACTION_DELETE)
+
+    headers = {
+        "Content-Type": "application/json",
+        "X-API-KEY": current_key
+    }
+    payload = {
+        "account_id": str(uid)
+    }
+
+    try:
+        url = f"{current_url}?action={action}"
+        response = requests.post(url, json=payload, headers=headers, timeout=12)
+        try:
+            data = response.json()
+        except Exception:
+            data = {"success": False, "message": "Unexpected upstream gateway response."}
+
+        # If configured action was 'delete' but upstream server expects 'remove', auto-fallback
+        if not data.get("success") and "Invalid action" in str(data.get("message", "")) and action != "remove":
+            fallback_url = f"{current_url}?action=remove"
+            response = requests.post(fallback_url, json=payload, headers=headers, timeout=12)
+            try:
+                data = response.json()
+            except Exception:
+                data = {"success": False, "message": "Unexpected upstream gateway response."}
+
+        is_success = (
+            (response.status_code in [200, 201])
+            or (data.get("success") is True)
+            or ("not found" in str(data.get("message", "")).lower())
+            or ("deleted" in str(data.get("message", "")).lower())
+            or ("removed" in str(data.get("message", "")).lower())
+        )
+        return {
+            "status": 200 if is_success else response.status_code,
+            "success": is_success,
+            "message": data.get("message", "Upstream UID deletion processed.")
+        }
+    except requests.exceptions.Timeout:
+        return {"status": 504, "success": False, "message": "Upstream gate timed out."}
+    except Exception as e:
+        return {"status": 500, "success": False, "message": f"Network error: {str(e)}"}
 
 # ==================== DISCORD OAUTH2 & MEMBER VERIFICATION ====================
 def get_discord_redirect_uri():
@@ -774,9 +826,15 @@ def admin_reset_all_cooldowns():
 def admin_delete_uid():
     if not session.get("admin_authenticated"):
         return jsonify({"success": False, "error": "Unauthorized"}), 401
-    uid = request.form.get("uid", "").strip()
+    uid = (request.form.get("uid") or (request.json.get("uid") if request.is_json else "") or "").strip()
     if uid:
+        delete_upstream_uid_api(uid)
         delete_claimed_uid(uid)
+        if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return jsonify({
+                "success": True,
+                "message": f"UID {uid} deleted successfully from database and upstream whitelist."
+            })
     return redirect("/admin")
 
 if __name__ == "__main__":

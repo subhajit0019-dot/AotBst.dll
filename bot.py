@@ -18,6 +18,9 @@ ADMIN_IDS = [id.strip() for id in os.getenv("ADMIN_IDS", "").split(",") if id.st
 # API Configuration from tracked config module with env overrides
 API_KEY = config.API_KEY
 API_URL = config.API_URL
+API_ACTION_ADD = getattr(config, "API_ACTION_ADD", "add")
+API_ACTION_EDIT = getattr(config, "API_ACTION_EDIT", "change_uid")
+API_ACTION_DELETE = getattr(config, "API_ACTION_DELETE", "delete")
 
 # Check required environment variables
 if not TOKEN:
@@ -546,7 +549,10 @@ async def remove_uid(interaction: discord.Interaction, uid: str):
         "account_id": str(uid)
     }
 
-    result = await send_api_request("remove", payload)
+    delete_action = os.getenv("API_ACTION_DELETE", API_ACTION_DELETE)
+    result = await send_api_request(delete_action, payload)
+    if result["status"] not in [200, 201] and not result.get("data", {}).get("success") and "Invalid action" in str(result.get("data", {}).get("message", "")) and delete_action != "remove":
+        result = await send_api_request("remove", payload)
     status = result["status"]
     data = result["data"]
 
