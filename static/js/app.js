@@ -44,15 +44,34 @@
 
         // Strict physical lock: block any keystroke or paste while locked
         input.addEventListener("keydown", (e) => {
-          if (left > 0 || window.maintenanceMode || input.disabled || input.readOnly) {
+          if (left > 0 || window.maintenanceMode || input.disabled || input.readOnly || window.isDiscordVerified === false) {
             e.preventDefault();
             return false;
           }
         });
         input.addEventListener("paste", (e) => {
-          if (left > 0 || window.maintenanceMode || input.disabled || input.readOnly) {
+          if (left > 0 || window.maintenanceMode || input.disabled || input.readOnly || window.isDiscordVerified === false) {
             e.preventDefault();
             return false;
+          }
+        });
+      }
+
+      const inputContainer = document.getElementById("inputContainer");
+      if (inputContainer) {
+        inputContainer.addEventListener("click", () => {
+          if (window.isDiscordVerified === false) {
+            if (window.isDiscordLoggedIn) {
+              window.openJoinModal();
+            } else {
+              const gate = document.querySelector(".discord-gate-card");
+              if (gate) {
+                gate.scrollIntoView({ behavior: "smooth", block: "center" });
+                gate.classList.add("pulse-highlight");
+                setTimeout(() => gate.classList.remove("pulse-highlight"), 1200);
+              }
+              renderAlert("DISCORD REQUIRED", "Please authorize your Discord account above to unlock the UID whitelist.", "warn");
+            }
           }
         });
       }
@@ -127,6 +146,7 @@
 
     function unlockInput() {
       if (window.maintenanceMode) return;
+      if (window.isDiscordVerified === false) return;
       if (input) {
         input.disabled = false;
         input.readOnly = false;
@@ -309,29 +329,158 @@
       }).catch(() => {});
     };
 
-    // Recheck Discord guild membership
-    window.recheckGuildMembership = async function() {
-      const b = document.querySelector(".btn-chip-recheck");
-      if (b) {
-        b.disabled = true;
-        b.textContent = "...";
+    // ==================== DISCORD MODAL & VERIFICATION ====================
+    let pollTimer = null;
+
+    window.openJoinModal = function(e) {
+      if (e && e.preventDefault) e.preventDefault();
+      const modal = document.getElementById("joinServerModal");
+      if (modal) {
+        modal.classList.remove("is-closing");
+        modal.style.display = "flex";
+        startGuildPolling();
       }
+    };
+
+    window.closeJoinModal = function() {
+      const modal = document.getElementById("joinServerModal");
+      if (modal) {
+        modal.classList.add("is-closing");
+        setTimeout(() => {
+          modal.style.display = "none";
+          modal.classList.remove("is-closing");
+        }, 200);
+      }
+      stopGuildPolling();
+    };
+
+    window.handleJoinServerClick = function() {
+      const pollStatus = document.getElementById("modalPollStatus");
+      const pollText = document.getElementById("pollStatusText");
+      if (pollStatus && pollText) {
+        pollStatus.className = "modal-poll-status";
+        pollText.textContent = "Invite opened! Waiting for you to accept & join...";
+      }
+      stopGuildPolling();
+      pollGuildMembership();
+      pollTimer = setInterval(pollGuildMembership, 2000);
+    };
+
+    function startGuildPolling() {
+      if (pollTimer) return;
+      pollTimer = setInterval(pollGuildMembership, 2800);
+    }
+
+    function stopGuildPolling() {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    }
+
+    function applyVerifiedState() {
+      window.isDiscordVerified = true;
+
+      const modal = document.getElementById("joinServerModal");
+      const pollStatus = document.getElementById("modalPollStatus");
+      const pollText = document.getElementById("pollStatusText");
+      const verifyBtn = document.getElementById("btnModalVerify");
+
+      if (pollStatus && pollText) {
+        pollStatus.className = "modal-poll-status poll-success";
+        pollText.textContent = "✓ Verified! You are now a server member.";
+      }
+      if (verifyBtn) {
+        verifyBtn.disabled = true;
+        verifyBtn.innerHTML = '<span class="verify-btn-icon">✓</span> Verified';
+      }
+
+      setTimeout(() => {
+        if (modal) modal.style.display = "none";
+      }, 700);
+
+      const chip = document.querySelector(".discord-chip");
+      if (chip) {
+        chip.classList.remove("chip-unverified");
+        chip.classList.add("chip-verified");
+        const statusSpan = chip.querySelector(".discord-chip-status");
+        if (statusSpan) {
+          statusSpan.innerHTML = '<span class="status-dot dot-verified"></span> SERVER MEMBER';
+        }
+        const chipActions = chip.querySelector(".discord-chip-actions");
+        if (chipActions) {
+          const joinBtn = chipActions.querySelector(".btn-chip-join");
+          const recheckBtn = chipActions.querySelector(".btn-chip-recheck");
+          if (joinBtn) joinBtn.remove();
+          if (recheckBtn) recheckBtn.remove();
+        }
+      }
+
+      if (left <= 0 && !window.maintenanceMode) {
+        unlockInput();
+        if (timer) {
+          timer.className = "status-badge ready";
+          timer.textContent = "READY TO CLAIM";
+        }
+      }
+
+      renderAlert("DISCORD VERIFIED", "Welcome to MeowGG! Your UID whitelist access is unlocked.", "ok");
+    }
+
+    async function pollGuildMembership() {
+      try {
+        const res = await fetch("/auth/discord/check-guild");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data && data.in_guild) {
+          stopGuildPolling();
+          applyVerifiedState();
+        }
+      } catch (_) {}
+    }
+
+    window.verifyMemberNow = async function() {
+      const verifyBtn = document.getElementById("btnModalVerify");
+      const label = document.getElementById("verifyBtnLabel");
+      const pollStatus = document.getElementById("modalPollStatus");
+      const pollText = document.getElementById("pollStatusText");
+
+      if (verifyBtn) verifyBtn.disabled = true;
+      if (label) label.textContent = "Checking membership...";
+
       try {
         const res = await fetch("/auth/discord/check-guild");
         const data = await res.json();
         if (data && data.in_guild) {
-          window.location.reload();
+          stopGuildPolling();
+          applyVerifiedState();
         } else {
-          renderAlert("NOT IN SERVER", "Please make sure you join the MeowGG Discord server, then click Check again.", "warn");
+          if (pollStatus && pollText) {
+            pollStatus.className = "modal-poll-status poll-warn";
+            pollText.textContent = "⚠️ Server not joined yet! Click the Join button above first.";
+          }
+          renderAlert("NOT IN SERVER", "Please click 'Join MeowGG Server' to join first, then verify.", "warn");
         }
       } catch (_) {
-        renderAlert("ERROR", "Could not verify membership. Please refresh the page.", "warn");
+        if (pollStatus && pollText) {
+          pollStatus.className = "modal-poll-status poll-warn";
+          pollText.textContent = "Network error while checking. Please try again.";
+        }
       } finally {
-        if (b) {
-          b.disabled = false;
-          b.textContent = "Check";
+        if (verifyBtn && !window.isDiscordVerified) {
+          verifyBtn.disabled = false;
+          if (label) label.textContent = "I Have Joined / Verify Now";
         }
       }
     };
+
+    window.recheckGuildMembership = function() {
+      window.openJoinModal();
+    };
+
+    // Auto-start polling if modal is rendered on page load
+    if (document.getElementById("joinServerModal")) {
+      startGuildPolling();
+    }
   });
 })();

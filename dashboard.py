@@ -573,8 +573,9 @@ def auth_discord_callback():
         "access_token": access_token,
         "in_guild": in_guild
     }
-
-    return redirect("/")
+    if not in_guild:
+        return redirect("/?join_prompt=1")
+    return redirect("/?verified=1")
 
 @app.route("/auth/discord/check-guild")
 def auth_discord_check_guild():
@@ -584,6 +585,7 @@ def auth_discord_check_guild():
     in_guild = add_and_verify_guild_member(user["id"], user.get("access_token"))
     user["in_guild"] = in_guild
     session["discord_user"] = user
+    session.modified = True
     return jsonify({"success": True, "in_guild": in_guild})
 
 @app.route("/auth/discord/logout")
