@@ -856,3 +856,80 @@ body.portal-body {
     text-align: center;
   }
 }
+
+/* =======================================================
+   MAINTENANCE MODE LOCKED CARD AESTHETICS
+   ======================================================= */
+.card.is-maintenance {
+  min-height: 250px !important;
+  max-height: 250px !important;
+  cursor: default !important;
+  border-color: rgba(245, 158, 11, 0.3) !important;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.9), 0 0 30px rgba(245, 158, 11, 0.08) !important;
+}
+
+.card.is-maintenance:hover,
+.card.is-maintenance:focus-within,
+.card.is-maintenance.is-active {
+  min-height: 250px !important;
+  max-height: 250px !important;
+  transform: none !important;
+}
+
+.card.is-maintenance .card-front {
+  cursor: default !important;
+  pointer-events: none !important;
+  min-height: 250px !important;
+}
+
+.card.is-maintenance .border {
+  border-color: rgba(245, 158, 11, 0.25) !important;
+  opacity: 0.7 !important;
+  transform: rotate(5deg) !important;
+}
+
+.card.is-maintenance .maintenance-notice {
+  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  animation: pulseNotice 2.5s ease-in-out infinite;
+}
+
+.card.is-maintenance .maintenance-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 18px;
+  border-radius: 9999px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: #fbbf24;
+  text-transform: uppercase;
+  text-shadow: 0 0 14px rgba(251, 191, 36, 0.45);
+}
+
+.card.is-maintenance .maintenance-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f59e0b;
+  box-shadow: 0 0 10px #f59e0b;
+  animation: blinkWarn 1.2s infinite;
+}
+
+@keyframes pulseNotice {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(0.98); }
+}
+
+@keyframes blinkWarn {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+

@@ -16,11 +16,11 @@
   <div class="portal-container">
     
     <!-- From Uiverse.io by Smit-Prajapati (Enhanced Interactive Matte Black UID Card) -->
-    <div class="card" id="portalCard">
+    <div class="card {% if maintenance_mode %}is-maintenance{% endif %}" id="portalCard">
       <div class="border"></div>
       
       <div class="card-stack">
-        <!-- Front View (By default shows 'Add UID', animated logo & border) -->
+        <!-- Front View: Resting state or Maintenance notice -->
         <div class="card-front">
           <div class="content">
             <div class="logo meowgg-logo">
@@ -29,11 +29,23 @@
                 <span class="meowgg-bar"></span>
               </div>
             </div>
+            {% if maintenance_mode %}
+            <div class="maintenance-notice">
+              <div class="maintenance-pill">
+                <span class="maintenance-dot"></span>
+                <span>The UID Portal is in Maintenance</span>
+              </div>
+            </div>
+            {% else %}
             <span class="logo-bottom-text">Add UID</span>
+            {% endif %}
           </div>
+          {% if not maintenance_mode %}
           <span class="bottom-text">MeowGG</span>
+          {% endif %}
         </div>
 
+        {% if not maintenance_mode %}
         <!-- Expanded Interactive UID Interface (Revealed on hover / mouse drag) -->
         <div class="card-expanded">
           <header class="card-header">
@@ -114,6 +126,7 @@
             </span>
           </div>
         </div>
+        {% endif %}
       </div>
 
     </div>

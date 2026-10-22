@@ -32,11 +32,15 @@
     // Expand card on click/touch/focus
     if (card) {
       card.addEventListener("click", () => {
+        if (card.classList.contains("is-maintenance")) return;
         card.classList.add("is-active");
       });
 
       if (input) {
-        input.addEventListener("focus", () => card.classList.add("is-active"));
+        input.addEventListener("focus", () => {
+          if (card.classList.contains("is-maintenance")) return;
+          card.classList.add("is-active");
+        });
       }
 
       // Collapse if clicked outside and input is empty
