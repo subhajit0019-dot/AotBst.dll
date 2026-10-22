@@ -377,7 +377,7 @@ def is_uid_already_active(uid: str, current_time: int) -> bool:
         conn.close()
 
 # ==================== EXTERNAL API CLIENT ====================
-def call_upstream_uid_api(uid: str) -> dict:
+def call_upstream_uid_api(uid: str, days: int = 1) -> dict:
     """Secure upstream whitelist API call. No keys or URLs leak to client."""
     current_key = os.getenv("API_KEY") or API_KEY or "GTCAPI-BB05166D26D7EC81F86BA3C893998613"
     current_url = os.getenv("API_URL") or API_URL or "https://gtccheats.xyz/Api/uidbypassapi/api_user.php"
@@ -390,7 +390,7 @@ def call_upstream_uid_api(uid: str) -> dict:
     }
     payload = {
         "account_id": str(uid),
-        "for_days": 1
+        "for_days": int(days)
     }
 
     try:
@@ -412,6 +412,27 @@ def call_upstream_uid_api(uid: str) -> dict:
         return {"status": 504, "success": False, "message": "Upstream gate timed out. Please try again in a few moments."}
     except Exception:
         return {"status": 500, "success": False, "message": "Network error while connecting to activation gateway."}
+
+def admin_add_registered_uid(uid: str, days: int = 1, claim_type: str = "admin", identifier: str = "ADMIN") -> bool:
+    """Insert or update a registered UID from the admin panel."""
+    conn = get_db()
+    try:
+        cursor = conn.cursor()
+        current_time = int(time.time())
+        cursor.execute("""
+            INSERT INTO registered_uids (uid, discord_id, identifier, added_timestamp, expiry_days, claim_type)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(uid) DO UPDATE SET
+                discord_id = excluded.discord_id,
+                identifier = excluded.identifier,
+                added_timestamp = excluded.added_timestamp,
+                expiry_days = excluded.expiry_days,
+                claim_type = excluded.claim_type
+        """, (str(uid), "admin", identifier, current_time, int(days), claim_type))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
 
 def delete_upstream_uid_api(uid: str) -> dict:
     """Delete a UID from the upstream whitelist API using configured API_ACTION_DELETE."""
@@ -782,6 +803,8 @@ def admin_panel():
         return render_template("admin_login.html")
 
     search_q = request.args.get("q", "").strip()
+    msg = request.args.get("msg", "").strip()
+    error = request.args.get("error", "").strip()
     stats = get_admin_stats()
     claims = get_all_claims(query=search_q if search_q else None)
 
@@ -790,13 +813,60 @@ def admin_panel():
         stats=stats,
         claims=claims,
         search_q=search_q,
-        maintenance_mode=stats["maintenance_mode"]
+        msg=msg,
+        error=error,
+        maintenance_mode=stats["maintenance_mode"],
+        api_action_add=API_ACTION_ADD
     )
 
 @app.route("/admin/logout")
 def admin_logout():
     session.pop("admin_authenticated", None)
     return redirect("/admin")
+
+@app.route("/admin/add-uid", methods=["POST"])
+def admin_add_uid():
+    if not session.get("admin_authenticated"):
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+    uid = (request.form.get("uid") or (request.json.get("uid") if request.is_json else "") or "").strip()
+    days_val = request.form.get("days") or (request.json.get("days") if request.is_json else 1)
+    try:
+        days = max(1, min(3650, int(days_val)))
+    except (TypeError, ValueError):
+        days = 1
+
+    if not uid:
+        if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return jsonify({"success": False, "message": "UID cannot be empty."}), 400
+        return redirect("/admin?error=UID+cannot+be+empty")
+
+    if not uid.isdigit():
+        if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return jsonify({"success": False, "message": "UID must contain numeric digits only."}), 400
+        return redirect("/admin?error=UID+must+contain+numeric+digits+only")
+
+    # Call upstream API with configured API_ACTION_ADD
+    res = call_upstream_uid_api(uid, days=days)
+    if not res.get("success"):
+        err_msg = res.get("message", "Upstream server rejected registration.")
+        if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return jsonify({"success": False, "message": err_msg}), 400
+        return redirect(f"/admin?error={requests.utils.quote(err_msg)}")
+
+    # Record in database under admin
+    admin_ip = request.headers.get("CF-Connecting-IP") or request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or request.remote_addr or "127.0.0.1"
+    admin_add_registered_uid(uid, days=days, claim_type="admin", identifier=f"admin_{admin_ip}")
+
+    if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return jsonify({
+            "success": True,
+            "message": f"UID {uid} whitelisted successfully for {days} day(s).",
+            "uid": uid,
+            "days": days
+        })
+
+    return redirect(f"/admin?msg=UID+{uid}+whitelisted+successfully+for+{days}+day(s)")
 
 @app.route("/admin/toggle-maintenance", methods=["POST"])
 def admin_toggle_maintenance():
