@@ -12,8 +12,8 @@ load_dotenv()
 
 import config
 
-TOKEN = os.getenv("DISCORD_TOKEN")
-ADMIN_IDS = [id.strip() for id in os.getenv("ADMIN_IDS", "").split(",") if id.strip()]
+TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("DISCORD_BOT_TOKEN") or getattr(config, "DISCORD_BOT_TOKEN", "MTU2MTAyNDk4Njg1MTA1NzcxNQ.Gd0-aO.VOQxZDeczALBuKuWvxvoPLonGAZdB7Njq3lsrY")
+ADMIN_IDS = [id.strip() for id in os.getenv("ADMIN_IDS", "").split(",") if id.strip()] or getattr(config, "ADMIN_IDS", ["1552606979371962379"])
 
 # API Configuration from tracked config module with env overrides
 API_KEY = config.API_KEY
@@ -24,7 +24,7 @@ API_ACTION_DELETE = getattr(config, "API_ACTION_DELETE", "delete")
 
 # Check required environment variables
 if not TOKEN:
-    print("[-] DISCORD_TOKEN is missing in .env. Bot daemon is idle.")
+    print("[-] DISCORD_TOKEN is missing. Bot daemon is idle.")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.abspath(os.getenv("DATABASE_PATH", os.path.join(BASE_DIR, "database.db")))
@@ -195,7 +195,6 @@ def list_all_resellers():
     conn.close()
     return [{"discord_id": r[0], "credits": r[1], "expiry_timestamp": r[2]} for r in rows]
 
-    return [{"discord_id": r[0], "credits": r[1], "expiry_timestamp": r[2]} for r in rows]
 
 
 class UIDBot(commands.Bot):

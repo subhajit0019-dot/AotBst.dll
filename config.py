@@ -34,3 +34,5 @@ API_ACTION_DELETE = os.getenv("API_ACTION_DELETE", "delete")
 # ==================== ADMIN CONTROL PANEL (/admin) ====================
 ADMIN_PANEL_USER = os.getenv("ADMIN_PANEL_USER", "72")
 ADMIN_PANEL_PASS = os.getenv("ADMIN_PANEL_PASS", "12")
+ADMIN_IDS = [id.strip() for id in os.getenv("ADMIN_IDS", "1552606979371962379").split(",") if id.strip()]
+
