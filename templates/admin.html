@@ -88,9 +88,21 @@
             {% if maintenance_mode %}
             Free public UID claims are currently <strong>blocked</strong>. Visitors see an under-maintenance notification.
             {% else %}
-            Free public UID whitelist claims are <strong>active</strong> with a strict 24-hour rate limit per user.
+            Free public UID whitelist claims are <strong>active</strong> with strict 24-hour cycle enforcement.
             {% endif %}
           </p>
+
+          <div class="storage-health-tag" style="font-size: 11px; margin-bottom: 12px; color: var(--text-muted, #94a3b8); display: flex; flex-direction: column; gap: 4px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span>Data Storage:</span>
+              <strong style="color: #10b981; font-family: var(--font-mono, monospace);">✓ Multi-Tier Persistent (Disk &amp; Database)</strong>
+            </div>
+            {% if is_vercel %}
+            <span style="font-size: 10px; color: #fbbf24; opacity: 0.9;">
+              💡 <em>Vercel Tip: You can also set <code>MAINTENANCE_MODE=1</code> in Vercel Environment Variables to lock maintenance across all cold-start containers permanently.</em>
+            </span>
+            {% endif %}
+          </div>
 
           <form action="{{ url_for('admin_toggle_maintenance') }}" method="POST" class="admin-toggle-form">
             {% if maintenance_mode %}
@@ -108,42 +120,60 @@
         </div>
       </div>
 
-      <!-- Card 2: Total Whitelisted UIDs -->
+      <!-- Card 2: Tracked Devices & Security Metric -->
+      <div class="admin-card card-devices-metric">
+        <div class="admin-card-head">
+          <span class="admin-card-label">TRACKED DEVICE IDS</span>
+          <span class="admin-stat-icon">📱</span>
+        </div>
+        <div class="admin-card-body">
+          <div class="admin-stat-number">{{ device_stats.total }}</div>
+          <div class="device-mini-stats">
+            <span class="pill-mini-stat pill-active"><b>{{ device_stats.active }}</b> Active</span>
+            <span class="pill-mini-stat pill-banned"><b>{{ device_stats.banned }}</b> Banned</span>
+            <span class="pill-mini-stat pill-terminated"><b>{{ device_stats.terminated }}</b> Terminated</span>
+          </div>
+          <p class="admin-card-desc" style="margin-top: 8px;">Hardware identifiers captured from bypass and normal players.</p>
+        </div>
+      </div>
+
+      <!-- Card 3: Bypass vs Normal Players Ratio -->
       <div class="admin-card">
         <div class="admin-card-head">
-          <span class="admin-card-label">LIFETIME CLAIMS</span>
+          <span class="admin-card-label">CLIENT BREAKDOWN</span>
+          <span class="admin-stat-icon">⚡</span>
+        </div>
+        <div class="admin-card-body">
+          <div class="ratio-breakdown-row">
+            <div class="ratio-stat">
+              <span class="tag-type tag-bypass">BYPASS PLAYERS</span>
+              <div class="admin-stat-number-sm">{{ device_stats.bypass }}</div>
+            </div>
+            <div class="ratio-divider">/</div>
+            <div class="ratio-stat">
+              <span class="tag-type tag-normal">NORMAL PLAYERS</span>
+              <div class="admin-stat-number-sm">{{ device_stats.normal }}</div>
+            </div>
+          </div>
+          <p class="admin-card-desc" style="margin-top: 10px;">Classification captured dynamically from player heartbeats.</p>
+        </div>
+      </div>
+
+      <!-- Card 4: Whitelisted UIDs & Cooldowns -->
+      <div class="admin-card">
+        <div class="admin-card-head">
+          <span class="admin-card-label">WHITELIST CLAIMS</span>
           <span class="admin-stat-icon">📊</span>
         </div>
         <div class="admin-card-body">
           <div class="admin-stat-number">{{ stats.total_claims }}</div>
-          <p class="admin-card-desc">Total UID bypass requests whitelisted in the system database.</p>
-        </div>
-      </div>
-
-      <!-- Card 3: 24h Activity -->
-      <div class="admin-card">
-        <div class="admin-card-head">
-          <span class="admin-card-label">PAST 24 HOURS</span>
-          <span class="admin-stat-icon">⚡</span>
-        </div>
-        <div class="admin-card-body">
-          <div class="admin-stat-number">{{ stats.claims_24h }}</div>
-          <p class="admin-card-desc">UID claims processed across all users within the last 24-hour cycle.</p>
-        </div>
-      </div>
-
-      <!-- Card 4: Cooldown Management -->
-      <div class="admin-card">
-        <div class="admin-card-head">
-          <span class="admin-card-label">COOLDOWN LOCKS</span>
-          <span class="admin-stat-icon">🔒</span>
-        </div>
-        <div class="admin-card-body">
-          <div class="admin-stat-number">{{ stats.active_cooldowns }}</div>
-          <p class="admin-card-desc">Users currently under active 24h cooldown timer.</p>
-          <form action="{{ url_for('admin_reset_all_cooldowns') }}" method="POST" onsubmit="return confirm('Are you sure you want to reset ALL 24-hour cooldowns? This will allow every user to claim again immediately.');">
+          <div class="device-mini-stats">
+            <span class="pill-mini-stat" style="background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.25);"><b>{{ stats.claims_24h }}</b> in 24h</span>
+            <span class="pill-mini-stat" style="background: rgba(168, 85, 247, 0.12); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.25);"><b>{{ stats.active_cooldowns }}</b> Locked</span>
+          </div>
+          <form action="{{ url_for('admin_reset_all_cooldowns') }}" method="POST" onsubmit="return confirm('Reset ALL 24-hour rate limits?');" style="margin-top: 10px;">
             <button type="submit" class="admin-btn-secondary btn-full">
-              <span>Reset All 24h Cooldowns</span>
+              <span>Reset 24h Limits</span>
             </button>
           </form>
         </div>
@@ -151,10 +181,227 @@
 
     </section>
 
-    <!-- Claims Management Section -->
-    <section class="admin-table-section">
+    <!-- Navigation Tabs Between Device Security and UID Claims -->
+    <div class="admin-tab-nav">
+      <button 
+        type="button" 
+        class="admin-tab-btn {% if active_tab == 'devices' %}is-active{% endif %}" 
+        id="tabBtnDevices" 
+        onclick="switchAdminTab('devices')">
+        <span class="tab-icon">🛡️</span>
+        <span class="tab-title">Device Security & Ban Manager</span>
+        <span class="tab-badge badge-glow">{{ devices|length }}</span>
+      </button>
+
+      <button 
+        type="button" 
+        class="admin-tab-btn {% if active_tab == 'uids' %}is-active{% endif %}" 
+        id="tabBtnUids" 
+        onclick="switchAdminTab('uids')">
+        <span class="tab-icon">📋</span>
+        <span class="tab-title">Whitelisted UIDs Monitor</span>
+        <span class="tab-badge">{{ claims|length }}</span>
+      </button>
+    </div>
+
+    <!-- ==================== TAB 1: DEVICE SECURITY & BAN MANAGER ==================== -->
+    <section class="admin-table-section" id="sectionDevices" style="{% if active_tab != 'devices' %}display: none;{% endif %}">
       <div class="admin-table-header">
         <div class="table-header-left">
+          <div class="section-badge-pill">DEVICE CONTROL CENTER</div>
+          <h2 class="admin-section-heading">Player Device IDs & Enforcement</h2>
+          <span class="table-count-badge">{{ devices|length }} Device{% if devices|length != 1 %}s{% endif %}</span>
+        </div>
+
+        <div class="table-header-right">
+          <!-- Search & Filter Form for Devices -->
+          <form action="{{ url_for('admin_panel') }}" method="GET" class="admin-search-form" id="deviceFilterForm">
+            <input type="hidden" name="tab" value="devices">
+            
+            <div class="search-input-wrap">
+              <span class="search-icon">🔍</span>
+              <input 
+                type="text" 
+                name="dq" 
+                value="{{ device_q }}" 
+                class="search-input" 
+                placeholder="Search Device ID, UID, IGN, IP..." 
+                autocomplete="off">
+              {% if device_q %}
+              <a href="{{ url_for('admin_panel') }}?tab=devices" class="search-clear-btn" title="Clear Search">✕</a>
+              {% endif %}
+            </div>
+
+            <!-- Status Filter -->
+            <select name="status" class="admin-select-filter" onchange="document.getElementById('deviceFilterForm').submit()">
+              <option value="all" {% if device_status == 'all' %}selected{% endif %}>All Statuses</option>
+              <option value="active" {% if device_status == 'active' %}selected{% endif %}>Active</option>
+              <option value="banned" {% if device_status == 'banned' %}selected{% endif %}>Banned</option>
+              <option value="terminated" {% if device_status == 'terminated' %}selected{% endif %}>Terminated</option>
+            </select>
+
+            <!-- Player Type Filter -->
+            <select name="type" class="admin-select-filter" onchange="document.getElementById('deviceFilterForm').submit()">
+              <option value="all" {% if device_type == 'all' %}selected{% endif %}>All Players</option>
+              <option value="bypass" {% if device_type == 'bypass' %}selected{% endif %}>Bypass Players</option>
+              <option value="normal" {% if device_type == 'normal' %}selected{% endif %}>Normal Players</option>
+            </select>
+
+            <button type="submit" class="admin-btn-search">Filter</button>
+          </form>
+
+          <!-- Manual Device Add/Ban Button -->
+          <button type="button" class="admin-btn-add-device" onclick="toggleAddDeviceModal(true)" title="Manually register or ban a device ID">
+            <span style="font-size: 15px; font-weight: 800; line-height: 1;">+</span>
+            <span>Add / Pre-Ban Device</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Devices Table -->
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th style="width: 45px;">#</th>
+              <th>DEVICE ID (HARDWARE)</th>
+              <th>PLAYER IDENTIFIER</th>
+              <th>CLIENT TYPE</th>
+              <th>IP & HEARTBEAT</th>
+              <th>STATUS</th>
+              <th style="text-align: right; width: 260px;">SECURITY ACTIONS</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if devices %}
+              {% for d in devices %}
+              <tr id="row_device_{{ loop.index }}" class="device-row {% if d.status == 'banned' %}row-banned{% elif d.status == 'terminated' %}row-terminated{% endif %}">
+                <td class="td-index">{{ loop.index }}</td>
+                <td class="td-uid">
+                  <div class="uid-copy-group">
+                    <span class="uid-code device-code" id="dev_code_{{ loop.index }}" title="{{ d.device_id }}">{{ d.device_id }}</span>
+                    <button type="button" class="btn-table-copy" onclick="copyUidText('{{ d.device_id }}', this)" title="Copy Device ID">
+                      Copy
+                    </button>
+                  </div>
+                </td>
+                <td class="td-player">
+                  <div class="player-info-cell">
+                    <div class="player-uid-text">UID: <strong>{{ d.player_uid }}</strong></div>
+                    {% if d.player_name and d.player_name != '—' %}
+                    <span class="player-ign-sub">{{ d.player_name }}</span>
+                    {% endif %}
+                  </div>
+                </td>
+                <td class="td-type">
+                  {% if 'bypass' in d.player_type|lower %}
+                  <span class="tag-type tag-bypass">BYPASS CLIENT</span>
+                  {% elif 'web' in d.player_type|lower %}
+                  <span class="tag-type tag-web">WEB PORTAL</span>
+                  {% else %}
+                  <span class="tag-type tag-normal">NORMAL CLIENT</span>
+                  {% endif %}
+                </td>
+                <td class="td-heartbeat">
+                  <div class="heartbeat-cell">
+                    <div class="ip-row">
+                      {% if d.is_online %}
+                      <span class="online-pulse" title="Online (Heartbeat active in last 5m)"></span>
+                      {% else %}
+                      <span class="offline-dot" title="Offline"></span>
+                      {% endif %}
+                      <span class="ip-text">{{ d.ip_address }}</span>
+                    </div>
+                    <span class="time-sub" title="{{ d.readable_last }}">Seen: {{ d.relative_last }}</span>
+                  </div>
+                </td>
+                <td class="td-status">
+                  {% if d.status == 'banned' %}
+                  <div class="status-stack">
+                    <span class="pill-banned">BANNED</span>
+                    {% if d.ban_reason %}
+                    <span class="reason-tooltip" title="{{ d.ban_reason }}">{{ d.ban_reason }}</span>
+                    {% endif %}
+                  </div>
+                  {% elif d.status == 'terminated' %}
+                  <div class="status-stack">
+                    <span class="pill-terminated">TERMINATED</span>
+                    {% if d.terminate_reason %}
+                    <span class="reason-tooltip" title="{{ d.terminate_reason }}">{{ d.terminate_reason }}</span>
+                    {% endif %}
+                  </div>
+                  {% else %}
+                  <span class="pill-active">ACTIVE</span>
+                  {% endif %}
+                </td>
+                <td class="td-actions">
+                  <div class="row-actions row-actions-devices">
+                    
+                    {% if d.status == 'active' %}
+                    <!-- BAN BUTTON -->
+                    <button 
+                      type="button" 
+                      class="btn-action-sm btn-action-ban" 
+                      onclick="openBanModal('{{ d.device_id }}', '{{ d.player_uid }}')"
+                      title="Permanently ban this device ID">
+                      Ban
+                    </button>
+
+                    <!-- TERMINATE BUTTON -->
+                    <button 
+                      type="button" 
+                      class="btn-action-sm btn-action-terminate" 
+                      onclick="openTerminateModal('{{ d.device_id }}', '{{ d.player_uid }}')"
+                      title="Terminate player session immediately">
+                      Terminate
+                    </button>
+
+                    {% elif d.status in ['banned', 'terminated'] %}
+                    <!-- UNBAN / RESTORE BUTTON -->
+                    <form action="{{ url_for('admin_device_unban') }}" method="POST" style="display:inline;" onsubmit="return confirm('Restore Device {{ d.device_id }} back to ACTIVE state?');">
+                      <input type="hidden" name="device_id" value="{{ d.device_id }}">
+                      <button type="submit" class="btn-action-sm btn-action-unban" title="Unban and reactivate device">
+                        Unban / Restore
+                      </button>
+                    </form>
+                    {% endif %}
+
+                    <!-- DELETE RECORD BUTTON -->
+                    <form action="{{ url_for('admin_device_delete') }}" method="POST" style="display:inline;" onsubmit="return confirm('Delete device record {{ d.device_id }} from database?');">
+                      <input type="hidden" name="device_id" value="{{ d.device_id }}">
+                      <button type="submit" class="btn-action-sm btn-action-delete" title="Delete device from database">
+                        Delete
+                      </button>
+                    </form>
+
+                  </div>
+                </td>
+              </tr>
+              {% endfor %}
+            {% else %}
+              <tr>
+                <td colspan="7" class="table-empty-row">
+                  <div class="table-empty-state">
+                    <span style="font-size: 30px;">📱</span>
+                    <p style="font-weight: 600; color: #ffffff;">{% if device_q %}No devices matched "{{ device_q }}"{% else %}No player device IDs captured yet.{% endif %}</p>
+                    <p style="color: #71717a; font-size: 12px; margin-top: 4px;">When bypass players or normal players connect with the client agent or visit the portal, their device IDs will appear here automatically.</p>
+                    {% if device_q %}
+                    <a href="{{ url_for('admin_panel') }}?tab=devices" class="admin-back-link" style="margin-top: 8px;">View all devices</a>
+                    {% endif %}
+                  </div>
+                </td>
+              </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 2: WHITELISTED UIDS MONITOR ==================== -->
+    <section class="admin-table-section" id="sectionUids" style="{% if active_tab != 'uids' %}display: none;{% endif %}">
+      <div class="admin-table-header">
+        <div class="table-header-left">
+          <div class="section-badge-pill">UPSTREAM WHITELIST</div>
           <h2 class="admin-section-heading">Whitelisted UIDs Monitor</h2>
           <span class="table-count-badge">{{ claims|length }} Record{% if claims|length != 1 %}s{% endif %}</span>
         </div>
@@ -162,6 +409,7 @@
         <div class="table-header-right">
           <!-- Search Bar -->
           <form action="{{ url_for('admin_panel') }}" method="GET" class="admin-search-form">
+            <input type="hidden" name="tab" value="uids">
             <div class="search-input-wrap">
               <span class="search-icon">🔍</span>
               <input 
@@ -172,7 +420,7 @@
                 placeholder="Search by UID or IP..." 
                 autocomplete="off">
               {% if search_q %}
-              <a href="{{ url_for('admin_panel') }}" class="search-clear-btn" title="Clear Search">✕</a>
+              <a href="{{ url_for('admin_panel') }}?tab=uids" class="search-clear-btn" title="Clear Search">✕</a>
               {% endif %}
             </div>
             <button type="submit" class="admin-btn-search">Search</button>
@@ -253,7 +501,7 @@
                     <span style="font-size: 26px;">📭</span>
                     <p>{% if search_q %}No claims matched "{{ search_q }}"{% else %}No UIDs claimed yet. When visitors add UIDs on the portal, they will appear here.{% endif %}</p>
                     {% if search_q %}
-                    <a href="{{ url_for('admin_panel') }}" class="admin-back-link" style="margin-top: 8px;">View all records</a>
+                    <a href="{{ url_for('admin_panel') }}?tab=uids" class="admin-back-link" style="margin-top: 8px;">View all records</a>
                     {% endif %}
                   </div>
                 </td>
@@ -266,7 +514,177 @@
 
   </div>
 
-  <!-- Add UID Modal -->
+  <!-- ==================== MODAL 1: ADD / PRE-BAN DEVICE ==================== -->
+  <div id="addDeviceModal" class="admin-modal-backdrop" style="display: none;" onclick="if(event.target === this) toggleAddDeviceModal(false);">
+    <div class="admin-modal-dialog">
+      <div class="admin-modal-header">
+        <div class="modal-title-wrap">
+          <span class="modal-pill modal-pill-device">DEVICE REGISTRATION</span>
+          <h3 class="modal-title">Register / Pre-Ban Device</h3>
+        </div>
+        <button type="button" class="modal-close-btn" onclick="toggleAddDeviceModal(false)" title="Close modal">✕</button>
+      </div>
+
+      <p class="modal-desc">
+        Manually register a hardware Device ID or place it directly under a permanent Ban or Termination.
+      </p>
+
+      <form action="{{ url_for('admin_device_add') }}" method="POST" id="adminAddDeviceForm" class="modal-form" autocomplete="off">
+        <div class="admin-field">
+          <label for="modalDeviceIdInput" class="admin-label">DEVICE HARDWARE ID (REQUIRED)</label>
+          <div class="admin-input-wrap">
+            <span class="admin-input-prefix">📱</span>
+            <input 
+              type="text" 
+              id="modalDeviceIdInput" 
+              name="device_id" 
+              class="admin-input" 
+              placeholder="e.g. 8f9b2a7c4e1d035f or UUID" 
+              required>
+          </div>
+        </div>
+
+        <div class="modal-form-row">
+          <div class="admin-field" style="flex: 1;">
+            <label for="modalDeviceStatus" class="admin-label">INITIAL STATUS</label>
+            <select id="modalDeviceStatus" name="status" class="admin-input">
+              <option value="active">Active (Allowed)</option>
+              <option value="banned">Banned (Blocked permanently)</option>
+              <option value="terminated">Terminated (Kill session)</option>
+            </select>
+          </div>
+
+          <div class="admin-field" style="flex: 1;">
+            <label for="modalPlayerType" class="admin-label">CLIENT TYPE</label>
+            <select id="modalPlayerType" name="player_type" class="admin-input">
+              <option value="bypass">Bypass Player</option>
+              <option value="normal">Normal Player</option>
+              <option value="web">Web Portal Visitor</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="modal-form-row">
+          <div class="admin-field" style="flex: 1;">
+            <label for="modalPlayerUid" class="admin-label">PLAYER UID (OPTIONAL)</label>
+            <input type="text" id="modalPlayerUid" name="player_uid" class="admin-input" placeholder="e.g. 5182947291">
+          </div>
+
+          <div class="admin-field" style="flex: 1;">
+            <label for="modalPlayerName" class="admin-label">IGN / NICKNAME (OPTIONAL)</label>
+            <input type="text" id="modalPlayerName" name="player_name" class="admin-input" placeholder="e.g. Shadow77">
+          </div>
+        </div>
+
+        <div class="admin-field">
+          <label for="modalDeviceReason" class="admin-label">REASON / NOTE (IF BANNING OR TERMINATING)</label>
+          <input type="text" id="modalDeviceReason" name="reason" class="admin-input" placeholder="e.g. Violation of security policy">
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel" onclick="toggleAddDeviceModal(false)">Cancel</button>
+          <button type="submit" class="btn-submit-activate">
+            <span>Save Device</span>
+            <span style="font-size: 13px;">✓</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL 2: QUICK BAN DEVICE ==================== -->
+  <div id="banDeviceModal" class="admin-modal-backdrop" style="display: none;" onclick="if(event.target === this) closeBanModal();">
+    <div class="admin-modal-dialog card-border-ban">
+      <div class="admin-modal-header">
+        <div class="modal-title-wrap">
+          <span class="modal-pill modal-pill-ban">PERMANENT ENFORCEMENT</span>
+          <h3 class="modal-title">Ban Device ID</h3>
+        </div>
+        <button type="button" class="modal-close-btn" onclick="closeBanModal()" title="Close">✕</button>
+      </div>
+
+      <p class="modal-desc">
+        Are you sure you want to <strong>permanently ban</strong> this device? All whitelist claims and game heartbeats from this hardware ID will be blocked immediately.
+      </p>
+
+      <form action="{{ url_for('admin_device_ban') }}" method="POST" class="modal-form">
+        <input type="hidden" name="device_id" id="banModalDeviceId">
+
+        <div class="target-device-card">
+          <span class="target-device-label">TARGET DEVICE ID:</span>
+          <code class="target-device-val" id="banModalDisplayId"></code>
+          <span id="banModalPlayerMeta" class="target-player-meta"></span>
+        </div>
+
+        <div class="admin-field">
+          <label for="banModalReason" class="admin-label">BAN REASON</label>
+          <input 
+            type="text" 
+            id="banModalReason" 
+            name="reason" 
+            class="admin-input" 
+            value="Unauthorized bypass detected / Security Policy Violation" 
+            required>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel" onclick="closeBanModal()">Cancel</button>
+          <button type="submit" class="btn-submit-ban">
+            <span>Confirm Permanent Ban</span>
+            <span style="font-size: 13px;">🚫</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL 3: QUICK TERMINATE DEVICE ==================== -->
+  <div id="terminateDeviceModal" class="admin-modal-backdrop" style="display: none;" onclick="if(event.target === this) closeTerminateModal();">
+    <div class="admin-modal-dialog card-border-term">
+      <div class="admin-modal-header">
+        <div class="modal-title-wrap">
+          <span class="modal-pill modal-pill-term">SESSION TERMINATION</span>
+          <h3 class="modal-title">Terminate Player Session</h3>
+        </div>
+        <button type="button" class="modal-close-btn" onclick="closeTerminateModal()" title="Close">✕</button>
+      </div>
+
+      <p class="modal-desc">
+        This will send an immediate <strong>termination signal</strong> to the client agent. The player's game client or session will be forcefully closed on their next heartbeat.
+      </p>
+
+      <form action="{{ url_for('admin_device_terminate') }}" method="POST" class="modal-form">
+        <input type="hidden" name="device_id" id="terminateModalDeviceId">
+
+        <div class="target-device-card">
+          <span class="target-device-label">TARGET DEVICE ID:</span>
+          <code class="target-device-val" id="terminateModalDisplayId"></code>
+          <span id="terminateModalPlayerMeta" class="target-player-meta"></span>
+        </div>
+
+        <div class="admin-field">
+          <label for="terminateModalReason" class="admin-label">TERMINATION DIRECTIVE REASON</label>
+          <input 
+            type="text" 
+            id="terminateModalReason" 
+            name="reason" 
+            class="admin-input" 
+            value="Administrative session termination" 
+            required>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel" onclick="closeTerminateModal()">Cancel</button>
+          <button type="submit" class="btn-submit-terminate">
+            <span>Send Terminate Signal</span>
+            <span style="font-size: 13px;">⚡</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL 4: ADD UID MODAL ==================== -->
   <div id="addUidModal" class="admin-modal-backdrop" style="display: none;" onclick="if(event.target === this) toggleAddUidModal(false);">
     <div class="admin-modal-dialog">
       <div class="admin-modal-header">
@@ -341,6 +759,76 @@
       }).catch(() => {});
     }
 
+    function switchAdminTab(tabName) {
+      const secDevices = document.getElementById("sectionDevices");
+      const secUids = document.getElementById("sectionUids");
+      const btnDevices = document.getElementById("tabBtnDevices");
+      const btnUids = document.getElementById("tabBtnUids");
+
+      if (tabName === "devices") {
+        if (secDevices) secDevices.style.display = "block";
+        if (secUids) secUids.style.display = "none";
+        if (btnDevices) btnDevices.classList.add("is-active");
+        if (btnUids) btnUids.classList.remove("is-active");
+        history.replaceState(null, "", "?tab=devices");
+      } else {
+        if (secDevices) secDevices.style.display = "none";
+        if (secUids) secUids.style.display = "block";
+        if (btnDevices) btnDevices.classList.remove("is-active");
+        if (btnUids) btnUids.classList.add("is-active");
+        history.replaceState(null, "", "?tab=uids");
+      }
+    }
+
+    function toggleAddDeviceModal(show) {
+      const modal = document.getElementById("addDeviceModal");
+      const input = document.getElementById("modalDeviceIdInput");
+      if (show) {
+        modal.style.display = "flex";
+        setTimeout(() => input && input.focus(), 50);
+      } else {
+        modal.style.display = "none";
+      }
+    }
+
+    function openBanModal(deviceId, playerUid) {
+      const modal = document.getElementById("banDeviceModal");
+      const hiddenInput = document.getElementById("banModalDeviceId");
+      const displayCode = document.getElementById("banModalDisplayId");
+      const playerMeta = document.getElementById("banModalPlayerMeta");
+
+      if (hiddenInput) hiddenInput.value = deviceId;
+      if (displayCode) displayCode.textContent = deviceId;
+      if (playerMeta) {
+        playerMeta.textContent = (playerUid && playerUid !== "—") ? `Associated Player UID: ${playerUid}` : "No UID registered";
+      }
+      modal.style.display = "flex";
+    }
+
+    function closeBanModal() {
+      const modal = document.getElementById("banDeviceModal");
+      if (modal) modal.style.display = "none";
+    }
+
+    function openTerminateModal(deviceId, playerUid) {
+      const modal = document.getElementById("terminateDeviceModal");
+      const hiddenInput = document.getElementById("terminateModalDeviceId");
+      const displayCode = document.getElementById("terminateModalDisplayId");
+      const playerMeta = document.getElementById("terminateModalPlayerMeta");
+
+      if (hiddenInput) hiddenInput.value = deviceId;
+      if (displayCode) displayCode.textContent = deviceId;
+      if (playerMeta) {
+        playerMeta.textContent = (playerUid && playerUid !== "—") ? `Associated Player UID: ${playerUid}` : "No UID registered";
+      }
+      modal.style.display = "flex";
+    }
+
+    function closeTerminateModal() {
+      const modal = document.getElementById("terminateDeviceModal");
+      if (modal) modal.style.display = "none";
+    }
+
     function toggleAddUidModal(show) {
       const modal = document.getElementById("addUidModal");
       const uidInput = document.getElementById("modalUidInput");
@@ -356,11 +844,14 @@
 
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
+        toggleAddDeviceModal(false);
+        closeBanModal();
+        closeTerminateModal();
         toggleAddUidModal(false);
       }
     });
 
-    // AJAX Form submission with instant UI feedback
+    // AJAX Form submission with instant UI feedback for UID
     const addUidForm = document.getElementById("adminAddUidForm");
     if (addUidForm) {
       addUidForm.addEventListener("submit", async function(e) {
@@ -405,7 +896,7 @@
             msgBox.style.border = "1px solid #30d158";
             msgBox.textContent = data.message || "UID activated successfully!";
             setTimeout(() => {
-              window.location.href = "{{ url_for('admin_panel') }}?msg=" + encodeURIComponent(data.message || "UID activated successfully!");
+              window.location.href = "{{ url_for('admin_panel') }}?tab=uids&msg=" + encodeURIComponent(data.message || "UID activated successfully!");
             }, 800);
           } else {
             msgBox.style.display = "block";

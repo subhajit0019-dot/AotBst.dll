@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import sqlite3
 import secrets
@@ -45,14 +46,20 @@ API_ACTION_DELETE = getattr(config, "API_ACTION_DELETE", "delete")
 DISCORD_SERVER_INVITE = config.DISCORD_SERVER_INVITE
 MEOW_DISCORD_SERVER_INVITE = config.MEOW_DISCORD_SERVER_INVITE
 
-# Vercel Serverless environment compatibility:
-# /var/task is read-only on Vercel. Writable SQLite database must reside in temp directory (/tmp).
+# Multi-tier Persistent Storage Configuration:
+# Tier 1: Local / BASE_DIR settings.json (persistent across VPS, local, and deployments)
+# Tier 2: /tmp settings.json & SQLite (ephemeral serverless scratch)
+# Tier 3: seed_db (BASE_DIR/database.db)
+# Tier 4: Environment variable overrides (e.g. MAINTENANCE_MODE=1)
+SETTINGS_FILE = os.path.join(BASE_DIR, "settings.json")
+
 if is_vercel:
     import tempfile
     import shutil
     tmp_dir = "/tmp" if os.path.exists("/tmp") else tempfile.gettempdir()
     tmp_db = os.path.join(tmp_dir, "database.db")
     seed_db = os.path.join(BASE_DIR, "database.db")
+    TMP_SETTINGS_FILE = os.path.join(tmp_dir, "settings.json")
     if not os.path.exists(tmp_db) and os.path.exists(seed_db):
         try:
             shutil.copy2(seed_db, tmp_db)
@@ -60,7 +67,165 @@ if is_vercel:
             pass
     DB_PATH = tmp_db
 else:
+    tmp_dir = BASE_DIR
     DB_PATH = os.path.abspath(os.getenv("DATABASE_PATH", os.path.join(BASE_DIR, "database.db")))
+    seed_db = DB_PATH
+    TMP_SETTINGS_FILE = SETTINGS_FILE
+
+# In-memory settings cache for zero-latency lookups and inter-request durability
+_SETTINGS_CACHE = {}
+_SETTINGS_CACHE_TIME = 0.0
+
+def load_persistent_settings() -> dict:
+    """Load persistent settings with multi-tier fallback (env var -> tmp JSON -> base JSON -> DB)."""
+    global _SETTINGS_CACHE, _SETTINGS_CACHE_TIME
+
+    # 1. Environment variable override (highest priority, immune to serverless cold starts)
+    env_maint = os.getenv("MAINTENANCE_MODE")
+    if env_maint is not None:
+        val = "1" if str(env_maint).strip().lower() in ("1", "true", "yes", "on") else "0"
+        return {"maintenance_mode": val, "source": "env"}
+
+    # 2. Check in-memory cache if fresh (within 3 seconds)
+    now = time.time()
+    if _SETTINGS_CACHE and (now - _SETTINGS_CACHE_TIME < 3.0):
+        return dict(_SETTINGS_CACHE)
+
+    # 3. Try reading tmp_dir / settings.json or base_dir / settings.json
+    for path in (TMP_SETTINGS_FILE, SETTINGS_FILE):
+        if path and os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict) and "maintenance_mode" in data:
+                        _SETTINGS_CACHE = data
+                        _SETTINGS_CACHE_TIME = now
+                        return dict(data)
+            except Exception:
+                pass
+
+    # 4. Try reading from active SQLite DB
+    try:
+        if os.path.exists(DB_PATH):
+            conn = sqlite3.connect(DB_PATH, timeout=5)
+            c = conn.cursor()
+            c.execute("SELECT value FROM system_settings WHERE key = 'maintenance_mode'")
+            row = c.fetchone()
+            conn.close()
+            if row:
+                data = {"maintenance_mode": str(row[0])}
+                _SETTINGS_CACHE = data
+                _SETTINGS_CACHE_TIME = now
+                return data
+    except Exception:
+        pass
+
+    # 5. Try reading from seed_db SQLite DB if distinct
+    if seed_db and os.path.exists(seed_db) and seed_db != DB_PATH:
+        try:
+            conn = sqlite3.connect(seed_db, timeout=5)
+            c = conn.cursor()
+            c.execute("SELECT value FROM system_settings WHERE key = 'maintenance_mode'")
+            row = c.fetchone()
+            conn.close()
+            if row:
+                data = {"maintenance_mode": str(row[0])}
+                _SETTINGS_CACHE = data
+                _SETTINGS_CACHE_TIME = now
+                return data
+        except Exception:
+            pass
+
+    return _SETTINGS_CACHE or {"maintenance_mode": "0"}
+
+
+def save_persistent_settings(settings: dict) -> bool:
+    """Save persistent settings across all available tiers (cache, files, databases)."""
+    global _SETTINGS_CACHE, _SETTINGS_CACHE_TIME
+    _SETTINGS_CACHE.update(settings)
+    _SETTINGS_CACHE_TIME = time.time()
+    success = False
+
+    # 1. Save to TMP_SETTINGS_FILE
+    try:
+        tmp_target = TMP_SETTINGS_FILE + ".tmp"
+        with open(tmp_target, "w", encoding="utf-8") as f:
+            json.dump(_SETTINGS_CACHE, f, indent=2)
+        if os.path.exists(TMP_SETTINGS_FILE):
+            os.remove(TMP_SETTINGS_FILE)
+        os.rename(tmp_target, TMP_SETTINGS_FILE)
+        success = True
+    except Exception:
+        pass
+
+    # 2. Save to BASE_DIR SETTINGS_FILE (if writable and distinct)
+    if SETTINGS_FILE != TMP_SETTINGS_FILE:
+        try:
+            tmp_target = SETTINGS_FILE + ".tmp"
+            with open(tmp_target, "w", encoding="utf-8") as f:
+                json.dump(_SETTINGS_CACHE, f, indent=2)
+            if os.path.exists(SETTINGS_FILE):
+                os.remove(SETTINGS_FILE)
+            os.rename(tmp_target, SETTINGS_FILE)
+            success = True
+        except Exception:
+            pass
+
+    # 3. Save to active SQLite DB
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        maint_val = str(_SETTINGS_CACHE.get("maintenance_mode", "0"))
+        cursor.execute("""
+            INSERT INTO system_settings (key, value)
+            VALUES ('maintenance_mode', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """, (maint_val,))
+        conn.commit()
+        conn.close()
+        success = True
+    except Exception:
+        pass
+
+    # 4. Save to seed_db directly if writable and distinct
+    if seed_db and os.path.exists(seed_db) and seed_db != DB_PATH:
+        try:
+            conn = sqlite3.connect(seed_db, timeout=5)
+            cursor = conn.cursor()
+            maint_val = str(_SETTINGS_CACHE.get("maintenance_mode", "0"))
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS system_settings (key TEXT PRIMARY KEY, value TEXT)
+            """)
+            cursor.execute("""
+                INSERT INTO system_settings (key, value)
+                VALUES ('maintenance_mode', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """, (maint_val,))
+            conn.commit()
+            conn.close()
+            success = True
+        except Exception:
+            pass
+
+    return success
+
+# Post-seed check on Vercel cold-boot to propagate saved settings to tmp_db
+if is_vercel and os.path.exists(DB_PATH):
+    try:
+        init_maint = load_persistent_settings().get("maintenance_mode")
+        if init_maint:
+            c_conn = sqlite3.connect(DB_PATH, timeout=5)
+            c_cursor = c_conn.cursor()
+            c_cursor.execute("CREATE TABLE IF NOT EXISTS system_settings (key TEXT PRIMARY KEY, value TEXT)")
+            c_cursor.execute("""
+                INSERT INTO system_settings (key, value)
+                VALUES ('maintenance_mode', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """, (str(init_maint),))
+            c_conn.commit()
+            c_conn.close()
+    except Exception:
+        pass
 
 COOLDOWN_SECONDS = 86400  # Strict 24-hour cycle
 
@@ -148,10 +313,49 @@ def init_db():
             value TEXT
         )
     """)
+    init_maint_val = str(load_persistent_settings().get("maintenance_mode", "0"))
     cursor.execute("""
         INSERT OR IGNORE INTO system_settings (key, value)
-        VALUES ('maintenance_mode', '0')
+        VALUES ('maintenance_mode', ?)
+    """, (init_maint_val,))
+
+    # Devices table for tracking player hardware IDs, bypass vs normal clients, and bans/terminations
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS devices (
+            device_id TEXT PRIMARY KEY,
+            player_uid TEXT,
+            player_name TEXT,
+            player_type TEXT DEFAULT 'normal',
+            ip_address TEXT,
+            user_agent TEXT,
+            app_version TEXT,
+            status TEXT DEFAULT 'active',
+            ban_reason TEXT,
+            terminate_reason TEXT,
+            first_seen INTEGER,
+            last_seen INTEGER
+        )
     """)
+    cursor.execute("PRAGMA table_info(devices);")
+    device_cols = [col[1] for col in cursor.fetchall()]
+    for col_name, col_type in [
+        ("player_uid", "TEXT"),
+        ("player_name", "TEXT"),
+        ("player_type", "TEXT DEFAULT 'normal'"),
+        ("ip_address", "TEXT"),
+        ("user_agent", "TEXT"),
+        ("app_version", "TEXT"),
+        ("status", "TEXT DEFAULT 'active'"),
+        ("ban_reason", "TEXT"),
+        ("terminate_reason", "TEXT"),
+        ("first_seen", "INTEGER"),
+        ("last_seen", "INTEGER")
+    ]:
+        if col_name not in device_cols:
+            try:
+                cursor.execute(f"ALTER TABLE devices ADD COLUMN {col_name} {col_type};")
+            except Exception:
+                pass
 
     conn.commit()
     conn.close()
@@ -160,32 +364,17 @@ init_db()
 
 # ==================== ADMIN & MAINTENANCE HELPERS ====================
 def is_maintenance_mode() -> bool:
-    """Check if free UID claims are paused for maintenance."""
-    conn = get_db()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT value FROM system_settings WHERE key = 'maintenance_mode'")
-        row = cursor.fetchone()
-        return bool(row and row[0] == '1')
-    except Exception:
-        return False
-    finally:
-        conn.close()
+    """Check if free UID claims are paused for maintenance via multi-tier persistence."""
+    settings = load_persistent_settings()
+    return str(settings.get("maintenance_mode", "0")) == "1"
 
 def set_maintenance_mode(enabled: bool):
-    """Enable or disable free UID claims maintenance mode."""
-    conn = get_db()
-    try:
-        cursor = conn.cursor()
-        val = '1' if enabled else '0'
-        cursor.execute("""
-            INSERT INTO system_settings (key, value)
-            VALUES ('maintenance_mode', ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value
-        """, (val,))
-        conn.commit()
-    finally:
-        conn.close()
+    """Enable or disable free UID claims maintenance mode and persist across all tiers."""
+    val = "1" if enabled else "0"
+    save_persistent_settings({
+        "maintenance_mode": val,
+        "updated_at": int(time.time())
+    })
 
 def get_admin_stats() -> dict:
     """Compile metrics on lifetime claims, today's claims, and active rate limits."""
@@ -286,6 +475,292 @@ def reset_all_rate_limits() -> bool:
         cursor.execute("DELETE FROM rate_limits")
         conn.commit()
         return True
+    finally:
+        conn.close()
+
+# ==================== DEVICE TRACKING & ENFORCEMENT HELPERS ====================
+def get_device_by_id(device_id: str) -> dict:
+    """Retrieve full device record by unique device ID."""
+    if not device_id:
+        return None
+    conn = get_db()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT device_id, player_uid, player_name, player_type, ip_address, 
+                   user_agent, app_version, status, ban_reason, terminate_reason, 
+                   first_seen, last_seen
+            FROM devices WHERE device_id = ?
+        """, (str(device_id).strip(),))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "device_id": row[0],
+            "player_uid": row[1] or "",
+            "player_name": row[2] or "",
+            "player_type": row[3] or "normal",
+            "ip_address": row[4] or "",
+            "user_agent": row[5] or "",
+            "app_version": row[6] or "1.0",
+            "status": row[7] or "active",
+            "ban_reason": row[8] or "",
+            "terminate_reason": row[9] or "",
+            "first_seen": row[10] or 0,
+            "last_seen": row[11] or 0
+        }
+    finally:
+        conn.close()
+
+def register_or_update_device(
+    device_id: str,
+    player_uid: str = None,
+    player_name: str = None,
+    player_type: str = "normal",
+    ip: str = None,
+    user_agent: str = None,
+    app_version: str = None
+) -> dict:
+    """
+    Capture incoming device ID from any player (bypass or normal client).
+    Updates heartbeat timestamp, IP, and client metadata while maintaining enforcement status.
+    """
+    clean_id = str(device_id).strip()
+    if not clean_id:
+        return None
+
+    conn = get_db()
+    try:
+        cursor = conn.cursor()
+        current_time = int(time.time())
+        cursor.execute("""
+            SELECT status, ban_reason, terminate_reason, first_seen, player_type, player_uid, player_name
+            FROM devices WHERE device_id = ?
+        """, (clean_id,))
+        row = cursor.fetchone()
+
+        if row:
+            status, ban_reason, terminate_reason, first_seen, existing_type, existing_uid, existing_name = row
+            effective_type = player_type if (player_type and player_type != "normal") else (existing_type or player_type or "normal")
+            effective_uid = player_uid if player_uid else (existing_uid or "")
+            effective_name = player_name if player_name else (existing_name or "")
+
+            cursor.execute("""
+                UPDATE devices SET
+                    last_seen = ?,
+                    ip_address = COALESCE(?, ip_address),
+                    user_agent = COALESCE(?, user_agent),
+                    app_version = COALESCE(?, app_version),
+                    player_type = ?,
+                    player_uid = ?,
+                    player_name = ?
+                WHERE device_id = ?
+            """, (current_time, ip, user_agent, app_version, effective_type, effective_uid, effective_name, clean_id))
+            conn.commit()
+
+            return {
+                "device_id": clean_id,
+                "status": status or "active",
+                "ban_reason": ban_reason or "",
+                "terminate_reason": terminate_reason or "",
+                "player_type": effective_type,
+                "player_uid": effective_uid,
+                "player_name": effective_name,
+                "first_seen": first_seen or current_time,
+                "last_seen": current_time,
+                "is_new": False
+            }
+        else:
+            clean_type = player_type or "normal"
+            clean_uid = player_uid or ""
+            clean_name = player_name or ""
+            cursor.execute("""
+                INSERT INTO devices (
+                    device_id, player_uid, player_name, player_type, ip_address,
+                    user_agent, app_version, status, ban_reason, terminate_reason,
+                    first_seen, last_seen
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', '', '', ?, ?)
+            """, (clean_id, clean_uid, clean_name, clean_type, ip or "", user_agent or "", app_version or "1.0", current_time, current_time))
+            conn.commit()
+
+            return {
+                "device_id": clean_id,
+                "status": "active",
+                "ban_reason": "",
+                "terminate_reason": "",
+                "player_type": clean_type,
+                "player_uid": clean_uid,
+                "player_name": clean_name,
+                "first_seen": current_time,
+                "last_seen": current_time,
+                "is_new": True
+            }
+    finally:
+        conn.close()
+
+def set_device_status(device_id: str, new_status: str, reason: str = "") -> bool:
+    """Update device enforcement state: 'active', 'banned', or 'terminated'."""
+    clean_id = str(device_id).strip()
+    if not clean_id:
+        return False
+
+    conn = get_db()
+    try:
+        cursor = conn.cursor()
+        current_time = int(time.time())
+        ban_r = reason if new_status == "banned" else ""
+        term_r = reason if new_status == "terminated" else ""
+
+        cursor.execute("SELECT device_id FROM devices WHERE device_id = ?", (clean_id,))
+        exists = cursor.fetchone()
+
+        if exists:
+            cursor.execute("""
+                UPDATE devices SET
+                    status = ?,
+                    ban_reason = CASE WHEN ? = 'banned' THEN ? ELSE '' END,
+                    terminate_reason = CASE WHEN ? = 'terminated' THEN ? ELSE '' END,
+                    last_seen = ?
+                WHERE device_id = ?
+            """, (new_status, new_status, ban_r, new_status, term_r, current_time, clean_id))
+        else:
+            cursor.execute("""
+                INSERT INTO devices (
+                    device_id, player_uid, player_name, player_type, ip_address,
+                    user_agent, app_version, status, ban_reason, terminate_reason,
+                    first_seen, last_seen
+                ) VALUES (?, '', '', 'manual', 'admin_action', 'Admin Panel', '1.0', ?, ?, ?, ?, ?)
+            """, (clean_id, new_status, ban_r, term_r, current_time, current_time))
+
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+def delete_device_record(device_id: str) -> bool:
+    """Remove a device record completely from tracking database."""
+    clean_id = str(device_id).strip()
+    if not clean_id:
+        return False
+    conn = get_db()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM devices WHERE device_id = ?", (clean_id,))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+def get_device_stats() -> dict:
+    """Compile aggregated counts for total, active, banned, terminated, and player classifications."""
+    conn = get_db()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM devices")
+        total = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM devices WHERE status = 'active'")
+        active = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM devices WHERE status = 'banned'")
+        banned = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM devices WHERE status = 'terminated'")
+        terminated = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM devices WHERE LOWER(player_type) LIKE '%bypass%'")
+        bypass_count = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM devices WHERE LOWER(player_type) NOT LIKE '%bypass%'")
+        normal_count = cursor.fetchone()[0]
+
+        return {
+            "total": total,
+            "active": active,
+            "banned": banned,
+            "terminated": terminated,
+            "bypass": bypass_count,
+            "normal": normal_count
+        }
+    finally:
+        conn.close()
+
+def get_all_devices(query: str = None, status_filter: str = None, type_filter: str = None, limit: int = 300) -> list:
+    """Retrieve full list of captured devices with online status and relative timestamps."""
+    conn = get_db()
+    try:
+        cursor = conn.cursor()
+        now = int(time.time())
+
+        sql = """
+            SELECT device_id, player_uid, player_name, player_type, ip_address,
+                   user_agent, app_version, status, ban_reason, terminate_reason,
+                   first_seen, last_seen
+            FROM devices
+        """
+        conditions = []
+        params = []
+
+        if query:
+            q = f"%{query.strip()}%"
+            conditions.append("(device_id LIKE ? OR player_uid LIKE ? OR player_name LIKE ? OR ip_address LIKE ?)")
+            params.extend([q, q, q, q])
+
+        if status_filter and status_filter.lower() != "all":
+            conditions.append("status = ?")
+            params.append(status_filter.lower())
+
+        if type_filter and type_filter.lower() != "all":
+            if type_filter.lower() == "bypass":
+                conditions.append("LOWER(player_type) LIKE '%bypass%'")
+            elif type_filter.lower() == "normal":
+                conditions.append("LOWER(player_type) NOT LIKE '%bypass%'")
+
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+
+        sql += " ORDER BY last_seen DESC LIMIT ?"
+        params.append(limit)
+
+        cursor.execute(sql, params)
+        rows = cursor.fetchall()
+        device_list = []
+        for row in rows:
+            dev_id, p_uid, p_name, p_type, ip, ua, ver, status, ban_r, term_r, f_seen, l_seen = row
+            is_online = (now - (l_seen or 0)) < 300
+
+            diff = now - (l_seen or 0)
+            if diff < 60:
+                rel_time = f"{diff}s ago"
+            elif diff < 3600:
+                rel_time = f"{diff // 60}m ago"
+            elif diff < 86400:
+                rel_time = f"{diff // 3600}h ago"
+            else:
+                rel_time = f"{diff // 86400}d ago"
+
+            readable_last = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(l_seen)) if l_seen else "Never"
+            readable_first = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(f_seen)) if f_seen else "Never"
+
+            device_list.append({
+                "device_id": dev_id,
+                "player_uid": p_uid or "—",
+                "player_name": p_name or "—",
+                "player_type": p_type or "normal",
+                "ip_address": ip or "Unknown",
+                "user_agent": ua or "",
+                "app_version": ver or "1.0",
+                "status": status or "active",
+                "ban_reason": ban_r or "",
+                "terminate_reason": term_r or "",
+                "first_seen": f_seen,
+                "last_seen": l_seen,
+                "readable_last": readable_last,
+                "readable_first": readable_first,
+                "relative_last": rel_time,
+                "is_online": is_online
+            })
+        return device_list
     finally:
         conn.close()
 
@@ -668,7 +1143,7 @@ def auth_discord_logout():
 
 @app.route("/api/status", methods=["GET"])
 def api_status():
-    """Live status query endpoint for client countdown synchronization."""
+    """Live status query endpoint for client countdown synchronization and device verification."""
     ip, token = get_client_identifiers()
     discord_user = session.get("discord_user")
     discord_id = discord_user.get("id") if discord_user else None
@@ -678,13 +1153,29 @@ def api_status():
     discord_oauth_enabled = bool(config.DISCORD_CLIENT_ID)
     is_discord_verified = (not discord_oauth_enabled) or (discord_user and discord_user.get("in_guild"))
 
+    device_id = request.args.get("device_id", "").strip()
+    device_status = "active"
+    device_message = ""
+    if device_id:
+        dev = get_device_by_id(device_id)
+        if dev:
+            device_status = dev.get("status", "active")
+            if device_status == "banned":
+                device_message = dev.get("ban_reason") or "This device is permanently banned."
+            elif device_status == "terminated":
+                device_message = dev.get("terminate_reason") or "This device session has been terminated."
+
+    can_claim = status_info["can_claim"] and not maintenance and is_discord_verified and (device_status == "active")
+
     return jsonify({
-        "can_claim": status_info["can_claim"] and not maintenance and is_discord_verified,
+        "can_claim": can_claim,
         "cooldown_remaining": status_info["cooldown_remaining"],
         "maintenance_mode": maintenance,
         "current_time": status_info["current_time"],
         "last_claim_timestamp": status_info["last_claim_timestamp"],
         "last_claimed_uid": status_info["last_claimed_uid"],
+        "device_status": device_status,
+        "device_message": device_message,
         "discord_user": {
             "username": discord_user.get("username"),
             "global_name": discord_user.get("global_name"),
@@ -693,16 +1184,146 @@ def api_status():
         "is_discord_verified": is_discord_verified
     })
 
+# ==================== DEVICE REPORT & HEARTBEAT API ====================
+@app.route("/api/device/report", methods=["POST"])
+@app.route("/api/device/heartbeat", methods=["POST"])
+@app.route("/api/device/verify", methods=["POST", "GET"])
+def api_device_report():
+    """
+    Primary endpoint for all player clients (bypass and normal players).
+    Receives device ID, client type, and optional in-game UID.
+    Returns enforcement directives:
+      - 'allow' (status: active)
+      - 'ban' (status: banned) -> client permanently locks
+      - 'terminate' (status: terminated) -> client forcefully exits
+    """
+    if request.method == "GET":
+        data = request.args
+    else:
+        data = request.get_json(silent=True) or request.form.to_dict() or {}
+
+    device_id = str(data.get("device_id") or request.headers.get("X-Device-ID") or "").strip()
+    if not device_id:
+        return jsonify({
+            "success": False,
+            "allowed": False,
+            "error": "missing_device_id",
+            "message": "Device ID is required for verification."
+        }), 400
+
+    player_uid = str(data.get("player_uid") or data.get("uid") or "").strip()
+    player_name = str(data.get("player_name") or data.get("ign") or data.get("name") or "").strip()
+    player_type = str(data.get("player_type") or data.get("type") or "normal").strip().lower()
+    app_version = str(data.get("app_version") or data.get("version") or "1.0").strip()
+
+    ip = get_client_ip()
+    user_agent = request.headers.get("User-Agent", "Player Client")
+
+    dev = register_or_update_device(
+        device_id=device_id,
+        player_uid=player_uid if player_uid else None,
+        player_name=player_name if player_name else None,
+        player_type=player_type,
+        ip=ip,
+        user_agent=user_agent,
+        app_version=app_version
+    )
+
+    status = dev.get("status", "active")
+
+    if status == "banned":
+        reason = dev.get("ban_reason") or "This device has been permanently banned by administrator."
+        return jsonify({
+            "success": False,
+            "allowed": False,
+            "status": "banned",
+            "action": "ban",
+            "device_id": device_id,
+            "reason": reason,
+            "message": f"DEVICE BANNED: {reason}"
+        }), 403
+
+    if status == "terminated":
+        reason = dev.get("terminate_reason") or "Your game session has been terminated by administrator."
+        return jsonify({
+            "success": False,
+            "allowed": False,
+            "status": "terminated",
+            "action": "terminate",
+            "device_id": device_id,
+            "reason": reason,
+            "message": f"SESSION TERMINATED: {reason}"
+        }), 403
+
+    return jsonify({
+        "success": True,
+        "allowed": True,
+        "status": "active",
+        "action": "allow",
+        "device_id": device_id,
+        "player_type": dev.get("player_type", "normal"),
+        "message": "Device verified and operational."
+    }), 200
+
+@app.route("/api/device/status/<device_id>", methods=["GET"])
+def api_device_status(device_id: str):
+    """Query status of a specific device ID."""
+    dev = get_device_by_id(device_id)
+    if not dev:
+        return jsonify({
+            "success": False,
+            "status": "unknown",
+            "allowed": False,
+            "message": "Device not registered in database."
+        }), 404
+
+    return jsonify({
+        "success": True,
+        "device_id": dev["device_id"],
+        "status": dev["status"],
+        "allowed": dev["status"] == "active",
+        "action": "allow" if dev["status"] == "active" else dev["status"],
+        "ban_reason": dev["ban_reason"],
+        "terminate_reason": dev["terminate_reason"],
+        "player_type": dev["player_type"],
+        "player_uid": dev["player_uid"],
+        "last_seen": dev["last_seen"]
+    })
+
+# ==================== PUBLIC UID CLAIM / WHITELIST API ====================
 @app.route("/api/whitelist", methods=["POST"])
 @app.route("/api/claim", methods=["POST"])
 def api_claim():
-    """Whitelists a numeric UID with strict 24-hour rate limit and anti-glitch concurrency lock."""
+    """Whitelists a numeric UID with strict 24-hour rate limit, anti-glitch lock, and device enforcement."""
     if is_maintenance_mode():
         return jsonify({
             "success": False,
             "maintenance": True,
             "message": "Free UID Whitelist is currently under maintenance. Claims are temporarily paused by administration."
         }), 503
+
+    data = request.get_json(silent=True) or {}
+    uid = str(data.get("uid", "")).strip()
+
+    # Device ID Enforcement: Check if client device is banned or terminated immediately
+    device_id = str(data.get("device_id") or request.headers.get("X-Device-ID") or "").strip()
+    if device_id:
+        dev = get_device_by_id(device_id)
+        if dev:
+            if dev.get("status") == "banned":
+                ban_msg = dev.get("ban_reason") or "This device is permanently banned from claiming UIDs."
+                return jsonify({
+                    "success": False,
+                    "device_banned": True,
+                    "message": f"DEVICE BANNED: {ban_msg}"
+                }), 403
+            if dev.get("status") == "terminated":
+                term_msg = dev.get("terminate_reason") or "This device session has been terminated by administrator."
+                return jsonify({
+                    "success": False,
+                    "device_terminated": True,
+                    "message": f"SESSION TERMINATED: {term_msg}"
+                }), 403
 
     discord_user = session.get("discord_user")
     discord_id = discord_user.get("id") if discord_user else None
@@ -727,9 +1348,6 @@ def api_claim():
                     "require_guild": True,
                     "message": "You must join the MeowGG Discord server before whitelisting your UID!"
                 }), 403
-
-    data = request.get_json(silent=True) or {}
-    uid = str(data.get("uid", "")).strip()
 
     # UID Validation: numeric only, 5 to 20 digits
     if not uid or not uid.isdigit():
@@ -773,6 +1391,14 @@ def api_claim():
         # Record claim and enforce 24-hour cooldown
         try:
             record_claim(ip, token, uid, current_time, discord_id=discord_id)
+            if device_id:
+                register_or_update_device(
+                    device_id=device_id,
+                    player_uid=uid,
+                    player_type="web",
+                    ip=ip,
+                    user_agent=request.headers.get("User-Agent", "Web Portal")
+                )
         except Exception:
             return jsonify({"success": False, "message": "Database write error. Please try again."}), 500
 
@@ -787,7 +1413,7 @@ def api_claim():
 # ==================== ADMIN PANEL ROUTES (/admin) ====================
 @app.route("/admin", methods=["GET", "POST"])
 def admin_panel():
-    """Admin panel: authentication with user 72 / pass 12, maintenance toggle, and claim monitoring."""
+    """Admin panel: authentication with user 72 / pass 12, device ban/terminate manager, maintenance toggle, and claim monitoring."""
     if request.method == "POST":
         username = str(request.form.get("username", "")).strip()
         password = str(request.form.get("password", "")).strip()
@@ -802,21 +1428,39 @@ def admin_panel():
     if not session.get("admin_authenticated"):
         return render_template("admin_login.html")
 
+    active_tab = request.args.get("tab", "devices").strip()
     search_q = request.args.get("q", "").strip()
+    device_q = request.args.get("dq", "").strip()
+    device_status = request.args.get("status", "all").strip()
+    device_type = request.args.get("type", "all").strip()
     msg = request.args.get("msg", "").strip()
     error = request.args.get("error", "").strip()
+
     stats = get_admin_stats()
+    device_stats = get_device_stats()
     claims = get_all_claims(query=search_q if search_q else None)
+    devices = get_all_devices(
+        query=device_q if device_q else None,
+        status_filter=device_status,
+        type_filter=device_type
+    )
 
     return render_template(
         "admin.html",
         stats=stats,
+        device_stats=device_stats,
         claims=claims,
+        devices=devices,
+        active_tab=active_tab,
         search_q=search_q,
+        device_q=device_q,
+        device_status=device_status,
+        device_type=device_type,
         msg=msg,
         error=error,
         maintenance_mode=stats["maintenance_mode"],
-        api_action_add=API_ACTION_ADD
+        api_action_add=API_ACTION_ADD,
+        is_vercel=is_vercel
     )
 
 @app.route("/admin/logout")
@@ -839,12 +1483,12 @@ def admin_add_uid():
     if not uid:
         if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
             return jsonify({"success": False, "message": "UID cannot be empty."}), 400
-        return redirect("/admin?error=UID+cannot+be+empty")
+        return redirect("/admin?tab=uids&error=UID+cannot+be+empty")
 
     if not uid.isdigit():
         if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
             return jsonify({"success": False, "message": "UID must contain numeric digits only."}), 400
-        return redirect("/admin?error=UID+must+contain+numeric+digits+only")
+        return redirect("/admin?tab=uids&error=UID+must+contain+numeric+digits+only")
 
     # Call upstream API with configured API_ACTION_ADD
     res = call_upstream_uid_api(uid, days=days)
@@ -852,7 +1496,7 @@ def admin_add_uid():
         err_msg = res.get("message", "Upstream server rejected registration.")
         if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
             return jsonify({"success": False, "message": err_msg}), 400
-        return redirect(f"/admin?error={requests.utils.quote(err_msg)}")
+        return redirect(f"/admin?tab=uids&error={requests.utils.quote(err_msg)}")
 
     # Record in database under admin
     admin_ip = request.headers.get("CF-Connecting-IP") or request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or request.remote_addr or "127.0.0.1"
@@ -866,15 +1510,23 @@ def admin_add_uid():
             "days": days
         })
 
-    return redirect(f"/admin?msg=UID+{uid}+whitelisted+successfully+for+{days}+day(s)")
+    return redirect(f"/admin?tab=uids&msg=UID+{uid}+whitelisted+successfully+for+{days}+day(s)")
 
 @app.route("/admin/toggle-maintenance", methods=["POST"])
 def admin_toggle_maintenance():
     if not session.get("admin_authenticated"):
         return jsonify({"success": False, "error": "Unauthorized"}), 401
     current = is_maintenance_mode()
-    set_maintenance_mode(not current)
-    return redirect("/admin")
+    new_state = not current
+    set_maintenance_mode(new_state)
+    status_str = "ON" if new_state else "OFF"
+    if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return jsonify({
+            "success": True,
+            "maintenance_mode": new_state,
+            "message": f"Maintenance mode successfully turned {status_str}."
+        })
+    return redirect(f"/admin?msg=Maintenance+mode+successfully+turned+{status_str}")
 
 @app.route("/admin/reset-cooldown", methods=["POST"])
 def admin_reset_cooldown():
@@ -883,14 +1535,14 @@ def admin_reset_cooldown():
     target = request.form.get("target", "").strip()
     if target:
         reset_identifier_cooldown(target)
-    return redirect("/admin")
+    return redirect("/admin?tab=uids")
 
 @app.route("/admin/reset-all-cooldowns", methods=["POST"])
 def admin_reset_all_cooldowns():
     if not session.get("admin_authenticated"):
         return jsonify({"success": False, "error": "Unauthorized"}), 401
     reset_all_rate_limits()
-    return redirect("/admin")
+    return redirect("/admin?tab=uids")
 
 @app.route("/admin/delete-uid", methods=["POST"])
 def admin_delete_uid():
@@ -905,7 +1557,150 @@ def admin_delete_uid():
                 "success": True,
                 "message": f"UID {uid} deleted successfully from database and upstream whitelist."
             })
-    return redirect("/admin")
+    return redirect("/admin?tab=uids")
+
+# ==================== ADMIN DEVICE MANAGEMENT ROUTES ====================
+@app.route("/admin/device/ban", methods=["POST"])
+def admin_device_ban():
+    """Ban a device ID permanently with an optional violation reason."""
+    if not session.get("admin_authenticated"):
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+    device_id = (request.form.get("device_id") or (request.json.get("device_id") if request.is_json else "") or "").strip()
+    reason = (request.form.get("reason") or (request.json.get("reason") if request.is_json else "Device banned by administrator") or "").strip()
+
+    if not device_id:
+        if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return jsonify({"success": False, "message": "Device ID is required."}), 400
+        return redirect("/admin?tab=devices&error=Device+ID+is+required")
+
+    set_device_status(device_id, "banned", reason=reason or "Banned by administrator")
+
+    if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return jsonify({
+            "success": True,
+            "message": f"Device {device_id} has been banned.",
+            "device_id": device_id,
+            "status": "banned"
+        })
+
+    return redirect(f"/admin?tab=devices&msg=Device+{device_id}+has+been+banned")
+
+@app.route("/admin/device/terminate", methods=["POST"])
+def admin_device_terminate():
+    """Terminate a player's device session immediately. Client agent auto-kills process."""
+    if not session.get("admin_authenticated"):
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+    device_id = (request.form.get("device_id") or (request.json.get("device_id") if request.is_json else "") or "").strip()
+    reason = (request.form.get("reason") or (request.json.get("reason") if request.is_json else "Session terminated by administrator") or "").strip()
+
+    if not device_id:
+        if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return jsonify({"success": False, "message": "Device ID is required."}), 400
+        return redirect("/admin?tab=devices&error=Device+ID+is+required")
+
+    set_device_status(device_id, "terminated", reason=reason or "Session terminated by administrator")
+
+    if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return jsonify({
+            "success": True,
+            "message": f"Device {device_id} session terminated. Kill directive active.",
+            "device_id": device_id,
+            "status": "terminated"
+        })
+
+    return redirect(f"/admin?tab=devices&msg=Device+{device_id}+session+terminated")
+
+@app.route("/admin/device/unban", methods=["POST"])
+def admin_device_unban():
+    """Restore a banned or terminated device back to active operational state."""
+    if not session.get("admin_authenticated"):
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+    device_id = (request.form.get("device_id") or (request.json.get("device_id") if request.is_json else "") or "").strip()
+
+    if not device_id:
+        if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return jsonify({"success": False, "message": "Device ID is required."}), 400
+        return redirect("/admin?tab=devices&error=Device+ID+is+required")
+
+    set_device_status(device_id, "active", reason="")
+
+    if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return jsonify({
+            "success": True,
+            "message": f"Device {device_id} restored to active status.",
+            "device_id": device_id,
+            "status": "active"
+        })
+
+    return redirect(f"/admin?tab=devices&msg=Device+{device_id}+unbanned+successfully")
+
+@app.route("/admin/device/delete", methods=["POST"])
+def admin_device_delete():
+    """Delete a device record from database."""
+    if not session.get("admin_authenticated"):
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+    device_id = (request.form.get("device_id") or (request.json.get("device_id") if request.is_json else "") or "").strip()
+
+    if not device_id:
+        if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return jsonify({"success": False, "message": "Device ID is required."}), 400
+        return redirect("/admin?tab=devices&error=Device+ID+is+required")
+
+    delete_device_record(device_id)
+
+    if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return jsonify({
+            "success": True,
+            "message": f"Device {device_id} deleted from tracking database."
+        })
+
+    return redirect(f"/admin?tab=devices&msg=Device+{device_id}+deleted+from+records")
+
+@app.route("/admin/device/add", methods=["POST"])
+def admin_device_add():
+    """Manually register or pre-ban a device ID from the admin console."""
+    if not session.get("admin_authenticated"):
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+    device_id = (request.form.get("device_id") or (request.json.get("device_id") if request.is_json else "") or "").strip()
+    status = (request.form.get("status") or (request.json.get("status") if request.is_json else "active") or "active").strip().lower()
+    player_type = (request.form.get("player_type") or (request.json.get("player_type") if request.is_json else "normal") or "normal").strip().lower()
+    player_uid = (request.form.get("player_uid") or (request.json.get("player_uid") if request.is_json else "") or "").strip()
+    player_name = (request.form.get("player_name") or (request.json.get("player_name") if request.is_json else "") or "").strip()
+    reason = (request.form.get("reason") or (request.json.get("reason") if request.is_json else "") or "").strip()
+
+    if not device_id:
+        if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return jsonify({"success": False, "message": "Device ID cannot be empty."}), 400
+        return redirect("/admin?tab=devices&error=Device+ID+cannot+be+empty")
+
+    admin_ip = get_client_ip()
+    register_or_update_device(
+        device_id=device_id,
+        player_uid=player_uid,
+        player_name=player_name,
+        player_type=player_type,
+        ip=f"admin_{admin_ip}",
+        user_agent="Admin Manual Entry",
+        app_version="Manual"
+    )
+
+    if status in ("banned", "terminated"):
+        set_device_status(device_id, status, reason=reason or f"Manually set to {status} by administrator")
+
+    if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return jsonify({
+            "success": True,
+            "message": f"Device {device_id} saved with status: {status}.",
+            "device_id": device_id,
+            "status": status
+        })
+
+    return redirect(f"/admin?tab=devices&msg=Device+{device_id}+saved+successfully")
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))

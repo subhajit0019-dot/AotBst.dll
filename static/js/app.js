@@ -119,7 +119,8 @@
       return `${z(h)}h ${z(m)}m ${z(s)}s`;
     }
 
-    function lockInput(claimedUid) {
+    function lockInput(claimedUid, isMaintenance) {
+      const isMaint = isMaintenance || Boolean(window.maintenanceMode);
       if (input) {
         input.disabled = true;
         input.readOnly = true;
@@ -127,19 +128,19 @@
         if (claimedUid) {
           input.value = claimedUid;
         }
-        input.placeholder = "UID Locked (24h Cooldown Active)";
+        input.placeholder = isMaint ? "Claims Paused (Maintenance)" : "UID Locked (24h Cooldown Active)";
       }
       const inputContainer = document.getElementById("inputContainer");
       if (inputContainer) inputContainer.classList.add("is-locked");
       const lockBadge = document.getElementById("lockBadge");
       if (lockBadge) lockBadge.style.display = "flex";
       const fieldHint = document.getElementById("fieldHint");
-      if (fieldHint) fieldHint.textContent = "LOCKED (COOLDOWN ACTIVE)";
+      if (fieldHint) fieldHint.textContent = isMaint ? "PAUSED" : "LOCKED (COOLDOWN ACTIVE)";
       if (btn) {
         btn.disabled = true;
         btn.classList.add("btn-locked");
       }
-      if (btnLabel) btnLabel.textContent = "UID Locked";
+      if (btnLabel) btnLabel.textContent = isMaint ? "Maintenance Active" : "UID Locked";
       const btnIcon = document.getElementById("btnIcon");
       if (btnIcon) btnIcon.textContent = "🔒";
     }
@@ -168,17 +169,76 @@
       if (btnIcon) btnIcon.textContent = "→";
     }
 
+    function applyMaintenanceUI(isMaintenance) {
+      window.maintenanceMode = Boolean(isMaintenance);
+      const maintNotice = document.getElementById("maintenanceNotice");
+      const logoBottomText = document.getElementById("logoBottomText");
+      const brandBottomText = document.getElementById("brandBottomText");
+      const cardExpanded = document.getElementById("cardExpanded");
+      const livePill = document.getElementById("livePill");
+      const statusDot = document.getElementById("statusDot");
+      const statusText = document.getElementById("statusText");
+
+      if (isMaintenance) {
+        if (card) {
+          card.classList.add("is-maintenance");
+          card.classList.remove("is-active");
+        }
+        if (maintNotice) maintNotice.style.display = "";
+        if (logoBottomText) logoBottomText.style.display = "none";
+        if (brandBottomText) brandBottomText.style.display = "none";
+        if (cardExpanded) cardExpanded.style.display = "none";
+        if (livePill) livePill.classList.add("pill-warn");
+        if (statusDot) statusDot.classList.add("dot-warn");
+        if (statusText) statusText.textContent = "MAINTENANCE";
+        if (timer) {
+          timer.textContent = "MAINTENANCE PAUSED";
+          timer.className = "status-badge badge-maintenance";
+        }
+        lockInput(null, true);
+        renderAlert(
+          "SYSTEM UNDER MAINTENANCE",
+          "Free UID whitelist claims are temporarily paused by administration.",
+          "warn"
+        );
+      } else {
+        if (card) {
+          card.classList.remove("is-maintenance");
+        }
+        if (maintNotice) maintNotice.style.display = "none";
+        if (logoBottomText) logoBottomText.style.display = "";
+        if (brandBottomText) brandBottomText.style.display = "";
+        if (cardExpanded) cardExpanded.style.display = "";
+        if (livePill) livePill.classList.remove("pill-warn");
+        if (statusDot) statusDot.classList.remove("dot-warn");
+        if (statusText) statusText.textContent = "ONLINE";
+        if (alertBox) {
+          const warnAlert = alertBox.querySelector(".portal-alert-warn");
+          if (warnAlert && warnAlert.textContent.includes("MAINTENANCE")) {
+            alertBox.innerHTML = "";
+          }
+        }
+        syncTimerDisplay();
+      }
+    }
+
     function syncTimerDisplay() {
       if (!timer) return;
+      if (window.maintenanceMode) {
+        timer.textContent = "MAINTENANCE PAUSED";
+        timer.className = "status-badge badge-maintenance";
+        lockInput(null, true);
+        return;
+      }
       if (left > 0) {
         timer.textContent = `${timeStr(left)}`;
-        timer.classList.remove("ready");
+        timer.classList.remove("ready", "badge-maintenance");
         timer.classList.add("active");
         const curUid = activeUidDisplay ? activeUidDisplay.textContent.trim() : "";
-        lockInput(curUid && curUid !== "—" ? curUid : null);
+        lockInput(curUid && curUid !== "—" ? curUid : null, false);
       } else {
         timer.textContent = "READY TO CLAIM";
-        timer.classList.remove("active");
+        timer.classList.remove("active", "badge-maintenance");
         timer.classList.add("ready");
         unlockInput();
       }
@@ -194,36 +254,88 @@
           left = 0;
           clearInterval(loop);
           syncTimerDisplay();
-          renderAlert("COOLDOWN FINISHED", "24-hour cycle has elapsed. You can now submit an Account UID.", "ok");
+          if (!window.maintenanceMode) {
+            renderAlert("COOLDOWN FINISHED", "24-hour cycle has elapsed. You can now submit an Account UID.", "ok");
+          }
         } else {
           syncTimerDisplay();
         }
       }, 1000);
     }
 
-    // Initialize timer
-    runClock();
+    // Initialize maintenance state & timer
+    if (window.maintenanceMode) {
+      applyMaintenanceUI(true);
+    } else {
+      runClock();
+    }
+
+    function getOrCreateDeviceId() {
+      let devId = "";
+      try {
+        devId = localStorage.getItem("meowgg_device_id");
+      } catch (_) {}
+
+      if (!devId || devId.length < 8) {
+        const cores = navigator.hardwareConcurrency || 4;
+        const screenMeta = `${screen.width}x${screen.height}`;
+        let randomHex = "";
+        try {
+          const arr = new Uint8Array(8);
+          crypto.getRandomValues(arr);
+          randomHex = Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+        } catch (_) {
+          randomHex = Math.random().toString(36).substring(2, 12);
+        }
+        devId = `DEV-${randomHex}-${cores}C-${screenMeta}`;
+        try {
+          localStorage.setItem("meowgg_device_id", devId);
+        } catch (_) {}
+      }
+      return devId;
+    }
 
     // Periodic sync with server
-    setInterval(async () => {
+    async function syncServerStatus() {
       try {
-        const res = await fetch("/api/status", { cache: "no-store" });
+        const devId = getOrCreateDeviceId();
+        const res = await fetch(`/api/status?device_id=${encodeURIComponent(devId)}`, { cache: "no-store" });
         const val = await res.json();
-        if (val && typeof val.cooldown_remaining === "number") {
+        if (val) {
+          if (val.device_status === "banned") {
+            renderAlert("DEVICE BANNED", val.device_message || "This device has been permanently banned by administrator.", "warn");
+            lockInput();
+            if (btn) btn.disabled = true;
+            return;
+          }
+          if (val.device_status === "terminated") {
+            renderAlert("SESSION TERMINATED", val.device_message || "Your session has been terminated by administrator.", "warn");
+            lockInput();
+            if (btn) btn.disabled = true;
+            return;
+          }
           if (val.maintenance_mode !== undefined) {
-            window.maintenanceMode = Boolean(val.maintenance_mode);
+            const serverMaint = Boolean(val.maintenance_mode);
+            if (serverMaint !== Boolean(window.maintenanceMode)) {
+              applyMaintenanceUI(serverMaint);
+            }
           }
-          if (Math.abs(val.cooldown_remaining - left) > 3) {
-            left = val.cooldown_remaining;
-            runClock();
-          }
-          if (val.last_claimed_uid && activeCard && activeUidDisplay) {
-            activeUidDisplay.textContent = val.last_claimed_uid;
-            activeCard.hidden = false;
+          if (typeof val.cooldown_remaining === "number") {
+            if (Math.abs(val.cooldown_remaining - left) > 3) {
+              left = val.cooldown_remaining;
+              runClock();
+            }
+            if (val.last_claimed_uid && activeCard && activeUidDisplay) {
+              activeUidDisplay.textContent = val.last_claimed_uid;
+              activeCard.hidden = false;
+            }
           }
         }
       } catch (_) {}
-    }, 10000);
+    }
+
+    syncServerStatus();
+    setInterval(syncServerStatus, 10000);
 
     // Form submit listener
     if (form) {
@@ -264,11 +376,19 @@
         if (btnLabel) btnLabel.textContent = "Processing...";
         btn.disabled = true;
 
+        const devId = getOrCreateDeviceId();
+
         try {
           const res = await fetch("/api/claim", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ uid: raw })
+            headers: { 
+              "Content-Type": "application/json",
+              "X-Device-ID": devId
+            },
+            body: JSON.stringify({ 
+              uid: raw,
+              device_id: devId
+            })
           });
           const body = await res.json();
 
@@ -282,6 +402,18 @@
             }
             runClock();
           } else {
+            if (body.device_banned) {
+              renderAlert("DEVICE BANNED", body.message || "This device has been permanently banned by administrator.", "warn");
+              lockInput();
+              if (btn) btn.disabled = true;
+              return;
+            }
+            if (body.device_terminated) {
+              renderAlert("SESSION TERMINATED", body.message || "Your session has been terminated by administrator.", "warn");
+              lockInput();
+              if (btn) btn.disabled = true;
+              return;
+            }
             renderAlert("WARNING", body.message || "Request could not be processed.", "warn");
             if (body.cooldown_remaining) {
               left = body.cooldown_remaining;

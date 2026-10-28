@@ -29,25 +29,19 @@
                 <span class="meowgg-bar"></span>
               </div>
             </div>
-            {% if maintenance_mode %}
-            <div class="maintenance-notice">
+            <div class="maintenance-notice" id="maintenanceNotice" {% if not maintenance_mode %}style="display: none;"{% endif %}>
               <div class="maintenance-pill">
                 <span class="maintenance-dot"></span>
                 <span>The UID Portal is in Maintenance</span>
               </div>
             </div>
-            {% else %}
-            <span class="logo-bottom-text">Add UID</span>
-            {% endif %}
+            <span class="logo-bottom-text" id="logoBottomText" {% if maintenance_mode %}style="display: none;"{% endif %}>Add UID</span>
           </div>
-          {% if not maintenance_mode %}
-          <span class="bottom-text">MeowGG</span>
-          {% endif %}
+          <span class="bottom-text" id="brandBottomText" {% if maintenance_mode %}style="display: none;"{% endif %}>MeowGG</span>
         </div>
 
-        {% if not maintenance_mode %}
         <!-- Expanded Interactive UID Interface (Revealed on hover / mouse drag) -->
-        <div class="card-expanded">
+        <div class="card-expanded" id="cardExpanded" {% if maintenance_mode %}style="display: none;"{% endif %}>
           <header class="card-header">
             <div class="brand-group">
               <div class="brand-badge">MG</div>
@@ -56,9 +50,9 @@
                 <span class="brand-sub">UID WHITELIST ACCESS</span>
               </div>
             </div>
-            <div class="live-pill {% if maintenance_mode %}pill-warn{% endif %}">
-              <span class="status-indicator {% if maintenance_mode %}dot-warn{% endif %}"></span>
-              <span class="status-text">{% if maintenance_mode %}MAINTENANCE{% else %}ONLINE{% endif %}</span>
+            <div class="live-pill {% if maintenance_mode %}pill-warn{% endif %}" id="livePill">
+              <span class="status-indicator {% if maintenance_mode %}dot-warn{% endif %}" id="statusDot"></span>
+              <span class="status-text" id="statusText">{% if maintenance_mode %}MAINTENANCE{% else %}ONLINE{% endif %}</span>
             </div>
           </header>
 
@@ -176,7 +170,6 @@
             </span>
           </div>
         </div>
-        {% endif %}
       </div>
 
     </div>
